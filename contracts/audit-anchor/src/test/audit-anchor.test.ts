@@ -15,7 +15,6 @@ import {
 // rather than every helper being widened at its call sites.
 type Bytes32 = Uint8Array<ArrayBufferLike>;
 const b = (fill: number): Bytes32 => new Uint8Array(32).fill(fill);
-
 const AGENT = b(0xa1);
 const OTHER_AGENT = b(0xa2);
 const SK = b(0x51);
@@ -32,112 +31,108 @@ const withEvents = (events: Bytes32[], sk: Bytes32 = SK, head: Bytes32 = HEAD0) 
 /**
  * Off-chain fold, used by the anchoring CLI and the viewer to predict the
  * commitment before submitting. It deliberately calls the *compiled circuit's*
- * foldStep rather than reimplementing persistentHash encoding — the encoding is
- * the circuit's business, and a second implementation would be a second source
- * of truth.
+ * `foldStep` rather than reimplementing persistentHash encoding — the encoding
+ * is the circuit's business, and a second implementation would be a second
+ * source of truth.
  */
-function foldOffChain(head: Bytes32, events: readonly Bytes32[]): Bytes32 {
-  return events.reduce<Bytes32>((h, e) => pureCircuits.foldStep(h, e), head);
-}
-
-/** Registered agent, ready to extend. */
-async function registered() {
-  const sim = await AuditAnchorSimulator.create(state());
-  await sim.anchorInitial(AGENT);
-  return sim;
+function foldOffChain(head: Uint8Array, events: readonly Uint8Array[]): Uint8Array {
+  return events.reduce((h, e) => pureCircuits.foldStep(h, e), head);
 }
 
 describe("AuditAnchor", () => {
-  it("anchorInitial registers owner, commitment and epoch 1", async () => {
-    const sim = await AuditAnchorSimulator.create(state());
-    const l = await sim.anchorInitial(AGENT);
+  it("anchorInitial registers owner, commitment and epoch 1", () => {
+    const sim = new AuditAnchorSimulator(state());
+    const l = sim.anchorInitial(AGENT);
 
     expect(l.epochs.lookup(AGENT)).toBe(1n);
     expect(l.owners.lookup(AGENT)).toEqual(pureCircuits.ownerTag(SK));
     expect(l.commitments.lookup(AGENT)).toEqual(pureCircuits.headTag(HEAD0));
   });
 
-  it("anchorInitial rejects double registration", async () => {
-    const sim = await registered();
-    await expect(sim.anchorInitial(AGENT)).rejects.toThrow();
+  it("anchorInitial rejects double registration", () => {
+    const sim = new AuditAnchorSimulator(state());
+    sim.anchorInitial(AGENT);
+    expect(() => sim.anchorInitial(AGENT)).toThrow();
   });
 
-  it("does not publish the head itself, only a commitment to it", async () => {
-    // The dual-ledger claim rests on this: the ledger must not contain the
-    // audit chain head in the clear.
-    const sim = await AuditAnchorSimulator.create(state());
-    const l = await sim.anchorInitial(AGENT);
+  it("does not publish the head itself, only a commitment to it", () => {
+    // The whole dual-ledger claim rests on this: the ledger must not contain
+    // the audit chain head in the clear.
+    const sim = new AuditAnchorSimulator(state());
+    const l = sim.anchorInitial(AGENT);
     expect(l.commitments.lookup(AGENT)).not.toEqual(HEAD0);
   });
 
-  it("anchorExtend with one event matches the simulator golden vector", async () => {
+  it("anchorExtend with one event matches the simulator golden vector", () => {
     const ev = b(0xe1);
-    const sim = await registered();
-    const l = await sim.as(withEvents([ev])).anchorExtend(AGENT);
+    const sim = new AuditAnchorSimulator(state());
+    sim.anchorInitial(AGENT);
 
-    expect(l.commitments.lookup(AGENT)).toEqual(
-      pureCircuits.headTag(foldOffChain(HEAD0, [ev])),
-    );
+    const l = sim.as(withEvents([ev])).anchorExtend(AGENT);
+
+    const expectedHead = foldOffChain(HEAD0, [ev]);
+    expect(l.commitments.lookup(AGENT)).toEqual(pureCircuits.headTag(expectedHead));
     expect(l.epochs.lookup(AGENT)).toBe(2n);
   });
 
-  it("off-chain fold agrees with the circuit across a full batch", async () => {
+  it("off-chain fold agrees with the circuit across a full batch", () => {
     const events = Array.from({ length: MAX_EVENTS }, (_, i) => b(0xc0 + i));
-    const sim = await registered();
-    const l = await sim.as(withEvents(events)).anchorExtend(AGENT);
+    const sim = new AuditAnchorSimulator(state());
+    sim.anchorInitial(AGENT);
 
+    const l = sim.as(withEvents(events)).anchorExtend(AGENT);
     expect(l.commitments.lookup(AGENT)).toEqual(
       pureCircuits.headTag(foldOffChain(HEAD0, events)),
     );
   });
 
-  it("trailing padding slots are inert", async () => {
-    // A one-event anchor with seven pad slots must produce the same commitment
-    // as folding that one event — otherwise padding would silently fold in.
+  it("trailing padding slots are inert", () => {
+    // A one-event anchor and an eight-slot witness with seven pad slots must
+    // produce the same commitment — otherwise padding would silently fold in.
     const ev = b(0xe1);
-    const sim = await registered();
-    const l = await sim.as(withEvents([ev])).anchorExtend(AGENT);
+    const a = new AuditAnchorSimulator(state());
+    a.anchorInitial(AGENT);
+    const one = a.as(withEvents([ev])).anchorExtend(AGENT).commitments.lookup(AGENT);
 
     expect(padEvents([ev])).toHaveLength(MAX_EVENTS);
-    expect(l.commitments.lookup(AGENT)).toEqual(
-      pureCircuits.headTag(foldOffChain(HEAD0, [ev])),
-    );
+    expect(one).toEqual(pureCircuits.headTag(foldOffChain(HEAD0, [ev])));
   });
 
-  it("anchorExtend rejects a wrong prevHead", async () => {
-    const sim = await registered();
+  it("anchorExtend rejects a wrong prevHead", () => {
+    const sim = new AuditAnchorSimulator(state());
+    sim.anchorInitial(AGENT);
     // Same key, same events — but claiming a head that was never anchored.
-    await expect(
-      sim.as(withEvents([b(0xe1)], SK, b(0x99))).anchorExtend(AGENT),
-    ).rejects.toThrow();
+    const wrong = withEvents([b(0xe1)], SK, b(0x99));
+    expect(() => sim.as(wrong).anchorExtend(AGENT)).toThrow();
   });
 
-  it("anchorExtend rejects a wrong secretKey", async () => {
-    const sim = await registered();
-    await expect(
-      sim.as(withEvents([b(0xe1)], OTHER_SK, HEAD0)).anchorExtend(AGENT),
-    ).rejects.toThrow();
+  it("anchorExtend rejects a wrong secretKey", () => {
+    const sim = new AuditAnchorSimulator(state());
+    sim.anchorInitial(AGENT);
+    const impostor = withEvents([b(0xe1)], OTHER_SK, HEAD0);
+    expect(() => sim.as(impostor).anchorExtend(AGENT)).toThrow();
   });
 
-  it("anchorExtend rejects squatting an unregistered agent", async () => {
-    const sim = await registered();
-    await expect(
-      sim.as(withEvents([b(0xe1)])).anchorExtend(OTHER_AGENT),
-    ).rejects.toThrow();
+  it("anchorExtend rejects squatting an unregistered agent", () => {
+    const sim = new AuditAnchorSimulator(state());
+    sim.anchorInitial(AGENT);
+    expect(() => sim.as(withEvents([b(0xe1)])).anchorExtend(OTHER_AGENT)).toThrow();
   });
 
-  it("anchorExtend rejects an empty batch", async () => {
-    const sim = await registered();
-    await expect(sim.as(withEvents([])).anchorExtend(AGENT)).rejects.toThrow();
+  it("anchorExtend rejects an empty batch", () => {
+    const sim = new AuditAnchorSimulator(state());
+    sim.anchorInitial(AGENT);
+    expect(() => sim.as(withEvents([])).anchorExtend(AGENT)).toThrow();
   });
 
-  it("epochs increase monotonically across anchors", async () => {
-    const sim = await registered();
+  it("epochs increase monotonically across anchors", () => {
+    const sim = new AuditAnchorSimulator(state());
+    sim.anchorInitial(AGENT);
 
     let head: Bytes32 = HEAD0;
     for (let round = 0; round < 3; round++) {
       const events = [b(0x70 + round)];
-      await sim.as(withEvents(events, SK, head)).anchorExtend(AGENT);
+      sim.as(withEvents(events, SK, head)).anchorExtend(AGENT);
       head = foldOffChain(head, events);
       expect(sim.getLedger().epochs.lookup(AGENT)).toBe(BigInt(round + 2));
     }

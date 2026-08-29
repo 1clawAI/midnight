@@ -3,9 +3,10 @@
 
 import {
   type CircuitContext,
-  createCircuitContext,
-  createConstructorContext,
+  QueryContext,
   sampleContractAddress,
+  createConstructorContext,
+  CostModel,
 } from "@midnight-ntwrk/compact-runtime";
 import {
   Contract,
@@ -14,103 +15,65 @@ import {
 } from "../managed/audit-anchor/contract/index.js";
 import {
   type AuditAnchorPrivateState,
+  createAuditAnchorPrivateState,
   witnesses,
 } from "../witnesses.js";
 
 /**
- * Test harness wrapping the compiled contract.
+ * Test harness wrapping the compiled contract, following the pattern used by
+ * midnightntwrk/example-bboard.
  *
- * Running the real compiled circuits (rather than a model of them) is the point:
- * it is what lets the tests assert that the off-chain fold helper agrees with
- * the circuit instead of two implementations that can drift.
- *
- * On ledger 9 the shape changed in two ways that matter here. `initialState` and
- * the impure circuits are now async, so construction goes through a factory.
- * And `CircuitContext` became a call-tree structure keyed by contract address,
- * built by `createCircuitContext` — so rather than mutating one long-lived
- * context, the simulator keeps the latest contract and private state and builds
- * a fresh context per call, which is also closer to how a real caller works.
+ * Running the real compiled circuits (rather than a hand-written model of them)
+ * is the point: it is what lets the tests assert that the off-chain fold helper
+ * agrees with the circuit, instead of two independent implementations that can
+ * drift apart silently.
  */
 export class AuditAnchorSimulator {
   readonly contract: Contract<AuditAnchorPrivateState>;
-  readonly address = sampleContractAddress();
+  circuitContext: CircuitContext<AuditAnchorPrivateState>;
 
-  private contractState: unknown;
-  private privateState: AuditAnchorPrivateState;
-  private zswapLocalState: unknown;
-
-  private constructor(
-    contract: Contract<AuditAnchorPrivateState>,
-    contractState: unknown,
-    privateState: AuditAnchorPrivateState,
-    zswapLocalState: unknown,
-  ) {
-    this.contract = contract;
-    this.contractState = contractState;
-    this.privateState = privateState;
-    this.zswapLocalState = zswapLocalState;
-  }
-
-  static async create(state: AuditAnchorPrivateState): Promise<AuditAnchorSimulator> {
-    const contract = new Contract<AuditAnchorPrivateState>(witnesses);
-    const res = await contract.initialState(
-      createConstructorContext(state, "0".repeat(64)),
-    );
-    return new AuditAnchorSimulator(
-      contract,
-      res.currentContractState,
-      res.currentPrivateState,
-      res.currentZswapLocalState,
-    );
-  }
-
-  private context(circuitId: string): CircuitContext<AuditAnchorPrivateState> {
-    return createCircuitContext<AuditAnchorPrivateState>(
-      circuitId,
-      this.address,
-      this.zswapLocalState as never,
-      this.contractState as never,
-      this.privateState,
-    );
-  }
-
-  private absorb(result: { context: CircuitContext<AuditAnchorPrivateState> }): Ledger {
-    const ctx = result.context;
-    this.contractState = ctx.callContext.currentQueryContext.state;
-    this.privateState = ctx.callContext.currentPrivateState as AuditAnchorPrivateState;
-    this.zswapLocalState = ctx.callContext.currentZswapLocalState;
-    return this.getLedger();
+  constructor(state: AuditAnchorPrivateState) {
+    this.contract = new Contract<AuditAnchorPrivateState>(witnesses);
+    const { currentPrivateState, currentContractState, currentZswapLocalState } =
+      this.contract.initialState(createConstructorContext(state, "0".repeat(64)));
+    this.circuitContext = {
+      currentPrivateState,
+      currentZswapLocalState,
+      costModel: CostModel.initialCostModel(),
+      currentQueryContext: new QueryContext(
+        currentContractState.data,
+        sampleContractAddress(),
+      ),
+    };
   }
 
   public getLedger(): Ledger {
-    return ledger(this.contractState as never);
+    return ledger(this.circuitContext.currentQueryContext.state);
   }
 
   public getPrivateState(): AuditAnchorPrivateState {
-    return this.privateState;
+    return this.circuitContext.currentPrivateState;
   }
 
   /** Swap the private state — used to test a different (unauthorised) caller. */
   public as(state: AuditAnchorPrivateState): this {
-    this.privateState = state;
+    this.circuitContext = { ...this.circuitContext, currentPrivateState: state };
     return this;
   }
 
-  public async anchorInitial(agentCommitment: Uint8Array): Promise<Ledger> {
-    return this.absorb(
-      await this.contract.impureCircuits.anchorInitial(
-        this.context("anchorInitial"),
-        agentCommitment,
-      ),
-    );
+  public anchorInitial(agentCommitment: Uint8Array): Ledger {
+    this.circuitContext = this.contract.impureCircuits.anchorInitial(
+      this.circuitContext,
+      agentCommitment,
+    ).context;
+    return this.getLedger();
   }
 
-  public async anchorExtend(agentCommitment: Uint8Array): Promise<Ledger> {
-    return this.absorb(
-      await this.contract.impureCircuits.anchorExtend(
-        this.context("anchorExtend"),
-        agentCommitment,
-      ),
-    );
+  public anchorExtend(agentCommitment: Uint8Array): Ledger {
+    this.circuitContext = this.contract.impureCircuits.anchorExtend(
+      this.circuitContext,
+      agentCommitment,
+    ).context;
+    return this.getLedger();
   }
 }

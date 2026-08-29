@@ -23,7 +23,7 @@
 // real chain, by its real owner — without revealing any event, the head, or
 // even the agent's identifier.
 
-pragma language_version 0.26;
+pragma language_version 0.23;
 
 import CompactStandardLibrary;
 

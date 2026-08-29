@@ -85,26 +85,27 @@ targets **ledger 9** and will not deploy to Preprod. Pin deliberately:
 
 | Component | Pinned | Why |
 | --- | --- | --- |
-| Compact toolchain | **0.34** | ledger 9 |
-| Compact runtime | **0.19.0** | must match the compiler's runtime version |
-| Ledger | 9.1.0.0-rc.3 | what the 0.34 compiler targets |
-| Wallet SDK | **5.0.0** / zswap **4.0.0** | the ledger-9 pairing |
-| Proof server | **9.0.0-rc.7-arm64** | ledger 9; the bare `9.0.0-rc.7` tag has no multi-arch manifest |
+| Compact toolchain | **0.31.1** | what midnightntwrk/example-bboard pins for Preprod |
+| Compact runtime | **0.16.0** | must match the compiler's runtime version |
+| Ledger | 8.0.2 | what the 0.31.1 compiler targets |
+| Wallet SDK | **4.0.0** / zswap **3.0.6** | the ledger-8 pairing |
+| midnight-js | **4.1.1** | latest stable; 5.x is beta only |
+| Proof server | **8.1.0** | matrix-specified for Preprod (Track B only) |
 
-The published [compatibility matrix](https://docs.midnight.network/relnotes/support-matrix)
-still lists ledger 8 (toolchain 0.31.1 / runtime 0.16.0 / proof server 8.1.0) for
-Preprod. It is out of date: Preprod serves `unshieldedCreatedOutputs`,
-`dustLedgerEvents` and `dustGenerationStatus`, and a faucet payout arrives as
-**unshielded NIGHT** — all ledger-9 concepts. Ledger 8 was Zswap-only. Pinning to
-the matrix produces a contract that compiles and then cannot deploy.
+We tried ledger 9 (toolchain 0.34 / wallet 5 / zswap 4) because Preprod serves
+`unshieldedCreatedOutputs`, `dustLedgerEvents` and `dustGenerationStatus`, and a
+faucet payout arrives as unshielded NIGHT — all ledger-9 concepts. It was the
+wrong conclusion: midnight-js has no stable ledger-9 release (5.0.0-beta.7 only,
+on an Effect-based API), and the actively maintained example-bboard still pins
+ledger-v8 8.1.0 with midnight-js 4.1.1. Preprod evidently serves the newer
+indexer surface over a ledger-8 chain.
 
-Two things bit us moving to 0.34, recorded so they do not bite again:
+Two things that cost time on 0.34, in case anyone tries again:
 
-- `event` became a reserved word in language 0.26, so a circuit parameter named
-  `event` no longer parses.
-- `Contract.initialState` and the impure circuits are **async**, and
-  `CircuitContext` became a call-tree structure built by `createCircuitContext`
-  rather than an object literal. The simulator was restructured accordingly.
+- `event` became a reserved word in language 0.26.
+- `Contract.initialState` and the impure circuits became async, and
+  `CircuitContext` turned into a call-tree built by `createCircuitContext`.
+
 
 ## Layout
 
