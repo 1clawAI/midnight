@@ -31,8 +31,10 @@ export function unshieldedAddressForSeed(seedHex: string, hrp = PREPROD_HRP): st
     .selectRole(Roles.NightExternal)
     .deriveKeyAt(0);
 
-  const raw = (derived as { key?: Uint8Array }).key ?? (derived as Uint8Array);
-  const bytes = Buffer.from((raw as { buffer?: ArrayBufferLike }).buffer ?? (raw as Uint8Array));
+  const raw = (derived as { key?: Uint8Array }).key ?? (derived as unknown as Uint8Array);
+  // Copy through a plain byte view: the derived key may be backed by a shared
+  // buffer, and Buffer.from(ArrayBuffer) would alias it rather than copy.
+  const bytes = Buffer.from(Uint8Array.from(raw));
   if (bytes.length !== UnshieldedAddress.keyLength) {
     throw new Error(`expected ${UnshieldedAddress.keyLength} key bytes, got ${bytes.length}`);
   }
