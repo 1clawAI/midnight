@@ -4,3 +4,6 @@ dist/
 # `npm run compact`. Judges build them; they are not committed.
 **/managed/
 .env.local
+
+# Local wallet-sync progress log
+.sync.log

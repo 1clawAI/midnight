@@ -1,0 +1,26 @@
+{
+  "name": "@1claw/midnight-signer",
+  "version": "0.1.0",
+  "description": "HTTP sidecar exposing Midnight unshielded signing to non-JS callers",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "bin": { "midnight-signer": "./src/server.ts" },
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "ci": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/wallet": "4.0.0",
+    "@midnight-ntwrk/wallet-sdk-hd": "3.0.2",
+    "@midnight-ntwrk/zswap": "3.0.6"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}
