@@ -76,11 +76,26 @@ runs under the **TestNet** network id — the two are encoded independently.
 
 1. Request tNIGHT at <https://faucet.preprod.midnight.network/> using the
    **unshielded** address. Rate limited; ~1000 tNIGHT per request.
-2. **Register the NIGHT on-chain** to start DUST generating. Holding NIGHT alone
-   produces nothing, and DUST — not NIGHT — is what pays fees. This is the step
-   that catches people out: a wallet can look funded and still be unable to
-   transact.
-3. Wait for DUST to accrue, then `npm run deploy:anchor`.
+2. **Register the NIGHT for DUST generation.** Holding NIGHT alone produces
+   nothing, and DUST — not NIGHT — is what pays fees. This is the step that
+   catches people out: a wallet looks funded and still cannot transact.
+
+   The faucet hands out *unregistered* NIGHT. Every unshielded UTXO carries a
+   `registeredForDustGeneration` flag, and on a fresh faucet grant it is
+   `false`. Check yours:
+
+   ```
+   npx tsx scripts/check-dust-registration.ts
+   ```
+
+   Registration is backed by a **Cardano** UTXO — the indexer's
+   `DustRegistration` keys on `utxoTxHash` / `utxoOutputIndex`, both documented
+   as Cardano fields, and `dustGenerationStatus` takes Cardano reward addresses
+   and rejects a Midnight one. Nothing in this repo can perform it, and neither
+   the Midnight faucet page nor the installed wallet SDK exposes it.
+3. Once `check-dust-registration` reports *generating*, run
+   `scripts/watch-dust-and-deploy.sh` — it waits for DUST, deploys the anchor,
+   and publishes the viewer.
 
 `npm --workspace @1claw/midnight-signer run start` then answers `/v1/dry-run`
 with exactly which of those three is missing.
