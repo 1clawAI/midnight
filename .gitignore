@@ -12,3 +12,13 @@ dist/
 # DUST watcher runtime logs
 .dust-watch.log
 .dust-watch-signer.log
+
+# The anchor viewer imports the compiled contract module to deserialize ledger
+# state, so a hosted build needs it committed — Vercel cannot run compactc. Only
+# contract/ (76K) is un-ignored; zkir/ and the 24MB of proving keys stay out,
+# since reading the ledger needs neither.
+!contracts/audit-anchor/src/managed/
+contracts/audit-anchor/src/managed/*
+!contracts/audit-anchor/src/managed/audit-anchor/
+contracts/audit-anchor/src/managed/audit-anchor/*
+!contracts/audit-anchor/src/managed/audit-anchor/contract/

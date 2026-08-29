@@ -28,7 +28,9 @@ import { unshieldedAddressForSeed } from "./unshielded-address.js";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONTRACT_DIR = resolve(ROOT, "contracts/audit-anchor");
 const MANAGED = resolve(CONTRACT_DIR, "src/managed/audit-anchor");
-const VIEWER_CONFIG = resolve(ROOT, "demo/anchor-viewer/config.json");
+// public/, not the app root: Vite serves and copies only publicDir, so a
+// config written beside package.json 404s in dev and never reaches dist.
+const VIEWER_CONFIG = resolve(ROOT, "demo/anchor-viewer/public/config.json");
 
 function envLocal(): Record<string, string> {
   const p = resolve(ROOT, ".env.local");
