@@ -1,0 +1,21 @@
+{
+  "name": "@1claw/audit-anchor-contract",
+  "version": "0.1.0",
+  "description": "Compact contract anchoring 1Claw's hash-chained audit log to Midnight",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "compact": "compact compile src/AuditAnchor.compact ./src/managed/audit-anchor",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "ci": "npm run compact && npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/compact-runtime": "0.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}

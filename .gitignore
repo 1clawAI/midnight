@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# Compiler output: proving keys are ~20MB and regenerate from source via
+# `npm run compact`. Judges build them; they are not committed.
+**/managed/
+.env.local

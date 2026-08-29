@@ -1,0 +1,130 @@
+// Copyright (C) 2026 1Claw
+// SPDX-License-Identifier: Apache-2.0
+//
+// AuditAnchor — anchors a 1Claw hash-chained audit log to Midnight.
+//
+// 1Claw's audit log is a HMAC-SHA256 hash chain: each entry commits to the one
+// before it. That makes tampering detectable *by whoever holds the log*, which
+// is 1Claw. This contract removes 1Claw from that trust assumption by anchoring
+// the chain head on a public ledger, while keeping the log itself private.
+//
+// What the proof actually claims
+// ------------------------------
+// A naive design ("prove I know the preimage of a hash I chose") proves nothing
+// useful — the caller picks both sides, and anyone could squat any agent id.
+// Here the chain relation lives *inside* the circuit: `anchorExtend` takes the
+// previous head and a batch of new event hashes as witnesses, folds them in
+// circuit, and can only succeed if
+//
+//   (a) the caller holds the secret key registered as owner of this agent, and
+//   (b) the previous head genuinely hashes to the currently anchored value.
+//
+// So the on-chain commitment can only advance by a correct extension of the
+// real chain, by its real owner — without revealing any event, the head, or
+// even the agent's identifier.
+
+pragma language_version 0.23;
+
+import CompactStandardLibrary;
+
+// Map keys are *agent commitments*, never raw 1Claw agent UUIDs:
+//   agentCommitment = persistentHash([domainSep, agentId, registrationSalt])
+// The salt lives in the 1Claw vault, so the ledger reveals no agent identity.
+export ledger commitments: Map<Bytes<32>, Bytes<32>>;
+
+// Monotonic anchor count per agent. Public on purpose: "this log has been
+// anchored N times" is exactly the liveness signal an auditor wants, and it
+// leaks nothing about content.
+export ledger epochs: Map<Bytes<32>, Uint<64>>;
+
+// agentCommitment -> persistentHash(secretKey). Registered on first anchor and
+// checked on every extend, which is what stops a third party squatting or
+// hijacking an agent's anchor.
+export ledger owners: Map<Bytes<32>, Bytes<32>>;
+
+// Maximum audit events folded per anchor call. Fixed because a circuit has no
+// dynamic loops; raising it costs proving time linearly.
+export circuit maxEvents(): Uint<8> { return 8; }
+
+witness localSecretKey(): Bytes<32>;
+
+// The head of the audit chain as it stood at the last successful anchor.
+witness localPrevHead(): Bytes<32>;
+
+// How many of the eight slots below are real events (the rest are ignored).
+witness localEventCount(): Uint<8>;
+
+// The `integrity_hash` of each new audit event since the last anchor.
+witness localNewEventHashes(): Vector<8, Bytes<32>>;
+
+// Domain separator so an owner hash can never be confused with a head
+// commitment or an agent commitment computed elsewhere.
+export circuit ownerTag(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "1claw:anchor:owner"), sk]);
+}
+
+export circuit headTag(head: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "1claw:anchor:head"), head]);
+}
+
+// One step of the chain fold. Kept as its own circuit so the simulator tests and
+// the off-chain TypeScript helper can be checked against the *same* definition
+// rather than two hand-written encodings that drift.
+export circuit foldStep(head: Bytes<32>, event: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([head, event]);
+}
+
+// Register an agent and anchor its first head.
+//
+// `initialHead` is witness-only: nothing about the log head becomes public,
+// consistent with `anchorExtend` keeping `prevHead` private.
+export circuit anchorInitial(agentCommitment: Bytes<32>): [] {
+  assert(!epochs.member(disclose(agentCommitment)), "agent already registered");
+
+  const sk = localSecretKey();
+  const head = localPrevHead();
+
+  owners.insert(disclose(agentCommitment), disclose(ownerTag(sk)));
+  commitments.insert(disclose(agentCommitment), disclose(headTag(head)));
+  epochs.insert(disclose(agentCommitment), 1);
+}
+
+// Extend an existing anchor by folding up to eight new audit events.
+export circuit anchorExtend(agentCommitment: Bytes<32>): [] {
+  const key = disclose(agentCommitment);
+  assert(epochs.member(key), "agent not registered");
+
+  const sk = localSecretKey();
+  const prevHead = localPrevHead();
+  const count = localEventCount();
+  const events = localNewEventHashes();
+
+  // Only the registered owner may advance this agent's anchor.
+  assert(ownerTag(sk) == owners.lookup(key), "not the registered owner");
+
+  // The supplied head must be the one currently anchored. Together with the
+  // fold below, this is what makes the new commitment a proof of *extension*
+  // rather than an arbitrary overwrite.
+  assert(headTag(prevHead) == commitments.lookup(key), "prevHead does not match anchored commitment");
+
+  assert(count <= maxEvents(), "too many events for one anchor");
+  assert(count > 0, "nothing to anchor");
+
+  // Fixed-length fold, unrolled: a circuit has no dynamic loop bound, and
+  // Compact has no mutable locals. Each step is guarded so slots at or past
+  // `count` are inert padding and cannot influence the result — the alternative
+  // (trusting the caller to zero unused slots) would let a malicious witness
+  // fold extra events in silently.
+  const h0 = prevHead;
+  const h1 = 0 < count ? foldStep(h0, events[0]) : h0;
+  const h2 = 1 < count ? foldStep(h1, events[1]) : h1;
+  const h3 = 2 < count ? foldStep(h2, events[2]) : h2;
+  const h4 = 3 < count ? foldStep(h3, events[3]) : h3;
+  const h5 = 4 < count ? foldStep(h4, events[4]) : h4;
+  const h6 = 5 < count ? foldStep(h5, events[5]) : h5;
+  const h7 = 6 < count ? foldStep(h6, events[6]) : h6;
+  const head = 7 < count ? foldStep(h7, events[7]) : h7;
+
+  commitments.insert(key, disclose(headTag(head)));
+  epochs.insert(key, (epochs.lookup(key) + 1) as Uint<64>);
+}
