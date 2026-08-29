@@ -8,3 +8,7 @@ dist/
 # Local wallet-sync progress log
 .sync.log
 dist/
+
+# DUST watcher runtime logs
+.dust-watch.log
+.dust-watch-signer.log
