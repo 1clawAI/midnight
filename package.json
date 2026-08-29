@@ -7,21 +7,30 @@
   "description": "1Claw \u00d7 Midnight \u2014 agent signing sidecar and audit-anchor contract",
   "workspaces": [
     "packages/*",
-    "contracts/*"
+    "contracts/*",
+    "demo/*"
   ],
   "scripts": {
     "sync-wallets": "tsx scripts/sync-wallets-preprod.ts",
     "test": "npm run test --workspaces --if-present",
     "ci": "npm run ci --workspaces --if-present",
     "sync-status": "grep -vE 'Timed out' .sync.log | tail -20",
-    "sync-stop": "pkill -f sync-wallets-preprod || true"
+    "sync-stop": "pkill -f sync-wallets-preprod || true",
+    "deploy:anchor": "bash scripts/deploy-anchor.sh",
+    "viewer": "npm run dev --workspace @1claw/anchor-viewer"
   },
   "devDependencies": {
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@midnight-ntwrk/midnight-js-contracts": "^4.1.1",
+    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "^4.1.1",
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "^4.1.1",
+    "@midnight-ntwrk/midnight-js-level-private-state-provider": "^4.1.1",
     "@midnight-ntwrk/midnight-js-network-id": "^4.1.1",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "^4.1.1",
+    "@midnight-ntwrk/midnight-js-types": "^4.1.1",
     "@midnight-ntwrk/wallet": "^4.0.0",
     "@midnight-ntwrk/wallet-sdk-hd": "^3.0.2",
     "@midnight-ntwrk/zswap": "^3.0.6"

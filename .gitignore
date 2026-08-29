@@ -7,3 +7,4 @@ dist/
 
 # Local wallet-sync progress log
 .sync.log
+dist/

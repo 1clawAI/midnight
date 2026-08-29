@@ -13,7 +13,7 @@ unshielded signing, plus an on-chain zero-knowledge proof that the audit log
 
 | Track | What it does | Status |
 | --- | --- | --- |
-| **A — Intents signing** | Unshielded NIGHT transfers on Preprod through 1Claw's Intents API: guardrails, spend caps, hash-chained audit log. No proof server on the signing path. | Sidecar in progress |
+| **A — Intents signing** | Unshielded NIGHT transfers on Preprod through 1Claw's Intents API: guardrails, spend caps, hash-chained audit log. No proof server on the signing path. | **Sidecar live, 19 tests; awaiting faucet funds** |
 | **B — Audit anchor** | A Compact contract that anchors 1Claw's audit chain head on Midnight, proving correct extension without revealing events, the head, or the agent's identity. | **Compiles + 12 simulator tests pass** |
 
 The tracks are independent in Wave 1: the signer never calls the contract.
@@ -69,11 +69,27 @@ Source: [Midnight compatibility matrix](https://docs.midnight.network/relnotes/s
 ## Layout
 
 ```
-contracts/audit-anchor/
-  src/AuditAnchor.compact        # the contract
+contracts/audit-anchor/          # Track B — the Compact contract
+  src/AuditAnchor.compact
   src/witnesses.ts               # private state + witness functions
-  src/test/AuditAnchorSimulator.ts
-  src/test/audit-anchor.test.ts  # 12 tests against the compiled circuits
+  src/test/                      # 12 tests against the compiled circuits
+packages/midnight-signer/        # Track A — HTTP sidecar the Vault calls
+  src/{validate,wallet-pool,routes,server}.ts
+  src/test/                      # 19 tests
+demo/anchor-viewer/              # read-only UI over the deployed contract
+  src/anchor.ts                  # decode + offline verify (8 tests)
+scripts/
+  sync-wallets-preprod.ts        # derive + watch the two Phase 0 wallets
+  deploy-anchor.sh               # compile, prove, deploy, write viewer config
+```
+
+## Running it
+
+```bash
+npm run sync-wallets     # derive both wallets, print addresses to fund
+npm run deploy:anchor    # after funding: compile + deploy, writes viewer config
+npm run viewer           # browse anchors, verify a fold offline
+npm --workspace @1claw/midnight-signer run start   # sidecar on :8091
 ```
 
 The off-chain fold helper calls the compiled contract's own `pureCircuits.foldStep`

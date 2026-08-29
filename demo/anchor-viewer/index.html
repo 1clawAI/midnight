@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>1Claw Audit Anchor — Midnight Preprod</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Audit Anchor</h1>
+        <p class="sub">
+          1Claw's hash-chained audit log, anchored on Midnight Preprod. The ledger
+          holds commitments — never the events, the chain head, or the agent's
+          identity.
+        </p>
+        <div id="meta" class="meta"></div>
+      </header>
+
+      <section>
+        <h2>On-chain anchors</h2>
+        <div id="rows" class="rows"><p class="dim">Loading contract state…</p></div>
+      </section>
+
+      <section>
+        <h2>Verify offline</h2>
+        <p class="sub">
+          Paste the head as of the last anchor and the event hashes that followed.
+          The fold runs with the contract's own circuit, so agreement here is
+          agreement with the chain.
+        </p>
+        <label for="head">Previous head (hex)</label>
+        <input id="head" placeholder="10" spellcheck="false" />
+        <label for="events">Event hashes, one per line (hex)</label>
+        <textarea id="events" rows="4" placeholder="e1&#10;e2" spellcheck="false"></textarea>
+        <label for="claim">Expected on-chain commitment (hex, optional)</label>
+        <input id="claim" placeholder="paste a commitment from the table above" spellcheck="false" />
+        <button id="verify">Compute commitment</button>
+        <div id="result" class="result"></div>
+      </section>
+
+      <footer>
+        <a href="https://github.com/1clawAI/midnight">1clawAI/midnight</a> ·
+        Apache-2.0 · built for Midnight Wave Hacks
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
