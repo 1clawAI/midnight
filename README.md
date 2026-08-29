@@ -150,7 +150,8 @@ site, unattended. It stops with a diagnosis rather than waiting out the clock
 when NIGHT is held but idle.
 
 If you know the intended flow for registering a seed-derived wallet on Preprod,
-we would genuinely like to hear it.
+we would genuinely like to hear it — **[QUESTION.md](QUESTION.md)** is the
+write-up we took to the Midnight community, with the evidence behind each claim.
 
 ## Version pinning (this bit matters)
 
