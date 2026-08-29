@@ -1,0 +1,20 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build --workspace @1claw/anchor-viewer",
+  "outputDirectory": "demo/anchor-viewer/dist",
+  "installCommand": "npm ci --ignore-scripts",
+  "framework": null,
+  "headers": [
+    {
+      "source": "/assets/(.*).wasm",
+      "headers": [
+        { "key": "Content-Type", "value": "application/wasm" },
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/config.json",
+      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+    }
+  ]
+}

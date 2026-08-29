@@ -38,6 +38,10 @@ Three things stay private: the audit events, the chain head, and the agent's
 identity — map keys are `persistentHash(agentId ‖ registrationSalt)`, and the
 salt never leaves the 1Claw vault.
 
+**Live viewer:** <https://1claw-anchor-viewer.vercel.app> — reads the anchored
+ledger, and verifies a fold offline using the contract's own circuit even before
+a contract address is configured.
+
 For the threat model, why the obvious designs fail, what the proof does *not*
 claim, and the privacy analysis, see **[WHITEPAPER.md](WHITEPAPER.md)**.
 
