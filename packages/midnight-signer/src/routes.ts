@@ -60,6 +60,53 @@ export async function balance(body: Json): Promise<Json> {
   };
 }
 
+/** Everything the dry-run decision needs, with no network or wallet in it. */
+export interface DryRunFacts {
+  nightBaseUnits: string;
+  dustBaseUnits: string;
+  hasCoins: boolean;
+  amountBaseUnits: bigint;
+  unshieldedAddress: string;
+}
+
+/**
+ * Decide why a transfer would fail, given already-fetched facts.
+ *
+ * Pure, and separate from `dryRun` so the failure paths are testable at all:
+ * the interesting cases — no DUST, no UTXOs, not enough NIGHT — are on-chain
+ * states that cannot be produced on demand against a live Preprod wallet, so
+ * the only way to cover them is to hand the decision its inputs directly.
+ *
+ * Every problem is collected rather than returning on the first: a caller
+ * funding a new wallet wants to know it needs both NIGHT and DUST in one round
+ * trip, not to discover the second after fixing the first.
+ */
+export function collectDryRunProblems(f: DryRunFacts): string[] {
+  const problems: string[] = [];
+  const night = BigInt(f.nightBaseUnits || "0");
+
+  if (night === 0n) {
+    problems.push(
+      `no unshielded NIGHT at ${f.unshieldedAddress} — fund that address at the Preprod faucet`,
+    );
+  } else if (night < f.amountBaseUnits) {
+    problems.push(`insufficient NIGHT: have ${f.nightBaseUnits}, need ${String(f.amountBaseUnits)}`);
+  }
+
+  if (!f.hasCoins) {
+    // Distinct from "unfunded": the shielded wallet is genuinely empty even when
+    // unshielded NIGHT is present, because the two live in separate ledgers.
+    problems.push("no shielded (Zswap) coins — unshielded NIGHT cannot be spent by the shielded wallet");
+  }
+
+  if (BigInt(f.dustBaseUnits || "0") <= 0n) {
+    // The failure people hit most: NIGHT present, DUST not yet accrued.
+    problems.push("no DUST — fees are paid in DUST, which accrues from held NIGHT over time");
+  }
+
+  return problems;
+}
+
 /**
  * POST /v1/dry-run
  *
@@ -80,23 +127,13 @@ export async function dryRun(body: Json): Promise<Json> {
   const nightInfo = await unshieldedNight(unshieldedAddr).catch(() => null);
   const night = nightInfo?.nightBaseUnits ?? "0";
 
-  const problems: string[] = [];
-  if (BigInt(night) === 0n) {
-    problems.push(
-      `no unshielded NIGHT at ${unshieldedAddr} — fund that address at the Preprod faucet`,
-    );
-  } else if (BigInt(night) < amount) {
-    problems.push(`insufficient NIGHT: have ${night}, need ${String(amount)}`);
-  }
-  if (!hasSpendableCoins(state)) {
-    // Distinct from "unfunded": the shielded wallet is genuinely empty even when
-    // unshielded NIGHT is present, because the two live in separate ledgers.
-    problems.push("no shielded (Zswap) coins — unshielded NIGHT cannot be spent by the shielded wallet");
-  }
-  if (BigInt(dust || "0") <= 0n) {
-    // The failure people hit most: NIGHT present, DUST not yet accrued.
-    problems.push("no DUST — fees are paid in DUST, which accrues from held NIGHT over time");
-  }
+  const problems = collectDryRunProblems({
+    nightBaseUnits: night,
+    dustBaseUnits: dust,
+    hasCoins: hasSpendableCoins(state),
+    amountBaseUnits: amount,
+    unshieldedAddress: unshieldedAddr,
+  });
 
   return {
     ok: problems.length === 0,
