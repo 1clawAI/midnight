@@ -5,6 +5,8 @@ import { nativeToken } from "@midnight-ntwrk/zswap";
 import { CFG } from "./config.js";
 import { acquire, firstState, poolSize } from "./wallet-pool.js";
 import { addressOf, publicKeyOf, splitBalances, hasSpendableCoins } from "./night.js";
+import { unshieldedNight } from "./unshielded.js";
+import { unshieldedAddressFor } from "./derive-unshielded.js";
 import {
   requireSeed,
   requireNetwork,
@@ -40,9 +42,22 @@ export async function balance(body: Json): Promise<Json> {
 
   const entry = await acquire(seed);
   const state = await firstState(entry);
-  const { night, dust } = splitBalances(state);
+  const { dust } = splitBalances(state);
 
-  return { night_base_units: night, dust_base_units: dust, address: addressOf(state) };
+  // NIGHT is read from the indexer, not the wallet. Faucet NIGHT lands in the
+  // *unshielded* UTXO set, which WalletState does not cover — reading it from
+  // `balances` reported zero for a funded wallet.
+  const unshieldedAddr = unshieldedAddressFor(seed);
+  const night = await unshieldedNight(unshieldedAddr).catch(() => null);
+
+  return {
+    night_base_units: night?.nightBaseUnits ?? "0",
+    dust_base_units: dust,
+    address: addressOf(state),
+    unshielded_address: unshieldedAddr,
+    night_source: night ? "indexer" : "unavailable",
+    night_transactions: night?.transactions ?? 0,
+  };
 }
 
 /**
@@ -59,14 +74,24 @@ export async function dryRun(body: Json): Promise<Json> {
 
   const entry = await acquire(seed);
   const state = await firstState(entry);
-  const { night, dust } = splitBalances(state);
+  const { dust } = splitBalances(state);
+
+  const unshieldedAddr = unshieldedAddressFor(seed);
+  const nightInfo = await unshieldedNight(unshieldedAddr).catch(() => null);
+  const night = nightInfo?.nightBaseUnits ?? "0";
 
   const problems: string[] = [];
-  if (!hasSpendableCoins(state)) {
-    problems.push("wallet has no spendable UTXOs — fund it from the Preprod faucet");
-  }
-  if (BigInt(night || "0") < amount) {
+  if (BigInt(night) === 0n) {
+    problems.push(
+      `no unshielded NIGHT at ${unshieldedAddr} — fund that address at the Preprod faucet`,
+    );
+  } else if (BigInt(night) < amount) {
     problems.push(`insufficient NIGHT: have ${night}, need ${String(amount)}`);
+  }
+  if (!hasSpendableCoins(state)) {
+    // Distinct from "unfunded": the shielded wallet is genuinely empty even when
+    // unshielded NIGHT is present, because the two live in separate ledgers.
+    problems.push("no shielded (Zswap) coins — unshielded NIGHT cannot be spent by the shielded wallet");
   }
   if (BigInt(dust || "0") <= 0n) {
     // The failure people hit most: NIGHT present, DUST not yet accrued.
@@ -77,6 +102,7 @@ export async function dryRun(body: Json): Promise<Json> {
     ok: problems.length === 0,
     problems,
     from_address: addressOf(state),
+    unshielded_address: unshieldedAddr,
     to_address: to,
     amount_base_units: String(amount),
     night_base_units: night,

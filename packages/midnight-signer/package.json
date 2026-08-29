@@ -5,7 +5,9 @@
   "license": "Apache-2.0",
   "type": "module",
   "private": true,
-  "bin": { "midnight-signer": "./src/server.ts" },
+  "bin": {
+    "midnight-signer": "./src/server.ts"
+  },
   "scripts": {
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
@@ -15,10 +17,14 @@
   },
   "dependencies": {
     "@midnight-ntwrk/wallet": "4.0.0",
-    "@midnight-ntwrk/wallet-sdk-hd": "3.0.2",
-    "@midnight-ntwrk/zswap": "3.0.6"
+    "@midnight-ntwrk/wallet-sdk-address-format": "^3.1.2",
+    "@midnight-ntwrk/wallet-sdk-hd": "^3.0.2",
+    "@midnight-ntwrk/zswap": "3.0.6",
+    "graphql-ws": "^6.2.1",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
