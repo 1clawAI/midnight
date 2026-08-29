@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "1Claw \u00d7 Midnight \u2014 agent signing sidecar and audit-anchor contract",
+  "description": "1Claw × Midnight — agent signing sidecar and audit-anchor contract",
   "workspaces": [
     "packages/*",
     "contracts/*",
@@ -32,6 +32,7 @@
     "@midnight-ntwrk/midnight-js-node-zk-config-provider": "^4.1.1",
     "@midnight-ntwrk/midnight-js-types": "^4.1.1",
     "@midnight-ntwrk/wallet": "^4.0.0",
+    "@midnight-ntwrk/wallet-sdk-address-format": "^3.1.2",
     "@midnight-ntwrk/wallet-sdk-hd": "^3.0.2",
     "@midnight-ntwrk/zswap": "^3.0.6"
   }

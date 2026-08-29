@@ -52,6 +52,32 @@ npm install
 npm run ci                     # compile → typecheck → 12 simulator tests
 ```
 
+## Funding a Preprod wallet
+
+`npm run sync-wallets` prints two addresses per wallet. They are not
+interchangeable:
+
+| Address | Looks like | Use |
+| --- | --- | --- |
+| **Unshielded** | `mn_addr_preprod1…` | **the faucet** — it rejects shielded addresses |
+| Shielded | `mn_shield-addr_test1…` | what the wallet SDK reports and transacts with |
+
+Only the shielded one appears in `WalletState`; the unshielded key lives on the
+HD tree under `Roles.NightExternal` and is bech32m-encoded separately
+(`scripts/unshielded-address.ts`). Note the HRP is `preprod` even though Preprod
+runs under the **TestNet** network id — the two are encoded independently.
+
+1. Request tNIGHT at <https://faucet.preprod.midnight.network/> using the
+   **unshielded** address. Rate limited; ~1000 tNIGHT per request.
+2. **Register the NIGHT on-chain** to start DUST generating. Holding NIGHT alone
+   produces nothing, and DUST — not NIGHT — is what pays fees. This is the step
+   that catches people out: a wallet can look funded and still be unable to
+   transact.
+3. Wait for DUST to accrue, then `npm run deploy:anchor`.
+
+`npm --workspace @1claw/midnight-signer run start` then answers `/v1/dry-run`
+with exactly which of those three is missing.
+
 ## Version pinning (this bit matters)
 
 `compact update` with no argument installs the newest toolchain, which currently

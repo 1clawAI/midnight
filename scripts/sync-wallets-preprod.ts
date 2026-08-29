@@ -22,6 +22,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WalletBuilder } from "@midnight-ntwrk/wallet";
 import { NetworkId } from "@midnight-ntwrk/zswap";
+import { unshieldedAddressForSeed } from "./unshielded-address.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_LOCAL = resolve(ROOT, ".env.local");
@@ -136,7 +137,16 @@ async function watchWallet(label: string, seed: string): Promise<void> {
       // before any funding arrives.
       if (!announced && address) {
         announced = true;
-        console.log(`[${label}] address: ${address}`);
+        // Both are printed because they are not interchangeable: the faucet
+        // rejects the shielded one, and only the shielded one appears in
+        // WalletState. Handing over just `address` is what sends people to the
+        // faucet with an address it will refuse.
+        console.log(`[${label}] shielded   (wallet):  ${address}`);
+        try {
+          console.log(`[${label}] unshielded (faucet): ${unshieldedAddressForSeed(seed)}`);
+        } catch (e) {
+          console.log(`[${label}] unshielded derivation failed: ${(e as Error).message}`);
+        }
       }
 
       const line = `[${label}] ${funded ? "FUNDED" : "waiting for funds"} | ${summary}`;
@@ -161,8 +171,11 @@ async function main(): Promise<void> {
   console.log(`  network: TestNet (${NETWORK_ID}) — Preprod`);
   console.log(
     "\n  A new wallet has no chain history, so it reports no sync progress until\n" +
-      "  it is funded. Fund BOTH addresses below from the Preprod faucet, then\n" +
-      "  wait for DUST to accrue from the held NIGHT before deploying or demoing.\n",
+      "  it is funded.\n\n" +
+      "  Fund the UNSHIELDED (mn_addr_preprod1…) address of each wallet at\n" +
+      "  https://faucet.preprod.midnight.network/ — the faucet rejects shielded\n" +
+      "  addresses. Then register the NIGHT on-chain to start DUST accruing;\n" +
+      "  holding NIGHT alone generates nothing, and DUST is what pays fees.\n",
   );
 
   // Watched concurrently: running them in sequence meant the second address was
