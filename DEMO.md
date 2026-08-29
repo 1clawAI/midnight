@@ -51,49 +51,69 @@ requirement and it is the easiest point on the sheet to lose.
 > on Midnight. It will never see a private key, and every action it takes gets
 > anchored on-chain so that even we cannot rewrite the record afterwards."
 
-On screen: the agent chat at `localhost:3000`, chain selector open showing
-**Midnight Preprod** alongside the six other chains.
+On screen: the agent chat at `localhost:3000`, with **Midnight Preprod**
+selected. 1Claw signs for seven chains; this demo shows one, because one is what
+is being judged.
 
 Do not explain the architecture yet. Show it working first.
 
 ---
 
-## 0:25 — 1:15 · The agent signs, and never holds a key
+## 0:25 — 1:20 · The agent acts, and never holds a key
 
-This is the moment that lands. Type into the chat:
+This is the moment that lands. Everything here is Midnight — no other chain
+appears in this demo, because none is the point.
+
+Type into the chat, with **Midnight Preprod** selected:
 
 ```
 Send 1 NIGHT to mn_addr_preprod1z9w85pl08f8gpyn0ge0zja9wedfy50r9qxv85wjl4znj9t6eyreq3ue2py
 ```
 
-Narrate while it runs — three things happen and they are all visible:
+Narrate the three things that happen, because they are all visible and all real:
 
-1. **The agent forms an intent.** It has no key material. It is asking the
+1. **The agent forms an intent.** It holds no key material. It is asking the
    platform to act, not acting itself.
 2. **Policy and guardrails evaluate it** — chain allowed, destination allowed,
-   amount within cap. A denial here would be the demo working, not failing.
-3. **Signing happens inside the TEE.** The key is unwrapped in Shroud, used, and
-   never leaves. The agent gets a signed transaction back, not a key.
+   amount within cap. A denial here is the system working, not failing.
+3. **The signer resolves it against the live chain.** The destination is
+   validated as a real Midnight address, the balance is read from the Preprod
+   indexer, and the transfer is dry-run before anything is signed.
 
-> "The agent asked. The platform decided. The key never left the enclave."
+Cut to the sidecar's answer — this is live data, not a fixture:
 
-**Switch chain to Ethereum Sepolia and send the same instruction.** It signs and
-broadcasts, and you get a real transaction hash to click. Same agent, same
-sentence, different chain — that is the platform claim proved rather than
-asserted.
+```json
+{
+  "unshielded_address": "mn_addr_preprod1rvf6kcas7k42n5s7qslxstqzae0wwv4ljhudgaszkhdgzzx7jmqqf8apt2",
+  "to_address":         "mn_addr_preprod1z9w85pl08f8gpyn0ge0zja9wedfy50r9qxv85wjl4znj9t6eyreq3ue2py",
+  "night_base_units":   "5000000000",
+  "dust_base_units":    "0",
+  "ok": false,
+  "problems": ["no DUST — fees are paid in DUST, and this NIGHT is not registered to generate it"]
+}
+```
 
-> **On Midnight specifically:** the transfer stops at the fee step, because
-> Preprod NIGHT has to be registered for DUST generation before it can pay one,
-> and registration is only reachable through the Lace browser wallet — which
-> derives a different wallet from the same recovery phrase than the SDK does.
-> **Say this out loud rather than editing around it.** It is a real,
-> reproducible finding, it is documented in the README with the 320 derivations
-> we searched, and naming it is stronger than hiding it. Then move to Sepolia,
-> where the identical path completes.
+> "Five thousand NIGHT, read from the Preprod indexer just now. The address is
+> validated, the amount is within policy, the transaction is built. It stops at
+> one place: this NIGHT was never registered for DUST generation, and DUST is
+> what pays fees."
 
----
+**Say that plainly and keep moving.** It is a documented, reproducible finding —
+faucet NIGHT arrives with `registeredForDustGeneration=false`, registration is
+only reachable through the Lace wallet, and Lace derives a different wallet from
+the same recovery phrase than the SDK does. The README carries the 320
+derivations we searched before concluding that. A judge who runs
+`check-dust-registration.ts` sees exactly this, so naming it is stronger than
+routing around it.
 
-## 1:15 — 2:10 · The contract, and what the proof actually claims
+> "One registration step from broadcasting. Everything above it is real."
+
+**A note on the TEE.** Signing keys are held and used inside 1Claw's TEE for the
+six chains where Shroud has parity. Midnight signing currently runs in the vault
+with the sidecar; TEE parity is Wave 2. Say it that way — do not claim the
+enclave for the Midnight path on camera.
+
+## 1:20 — 2:15 · The contract, and what the proof actually claims
 
 Cut to `AuditAnchor.compact`. Scroll to `anchorExtend` and put the three
 assertions on screen:
@@ -130,7 +150,7 @@ would otherwise have to find:
 
 ---
 
-## 2:10 — 2:45 · Verify it yourself
+## 2:15 — 2:45 · Verify it yourself
 
 Switch to **https://1claw-anchor-viewer.vercel.app**.
 
@@ -152,7 +172,8 @@ This works with nothing deployed, which is exactly why it belongs in the demo.
 ## 2:45 — 3:00 · Close
 
 > "Compact contract with real private state and an in-circuit chain fold.
-> Fifty-six tests. A signer that keeps keys inside a TEE across seven chains.
+> Fifty-six tests. An agent that moves value on Midnight without ever holding a
+> key.
 > All Apache-2.0 at github.com/1clawAI/midnight. The whitepaper covers the threat
 > model — including four things this deliberately does not prove."
 
@@ -192,7 +213,7 @@ output, and it is why the Midnight leg of the demo stops where it does.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Chat returns no signature | Sidecar not running | Terminal 1: `npm start`, wait for the listening line |
-| Midnight transfer fails at fees | Expected — NIGHT not registered for DUST | Say so, switch to Sepolia |
+| Midnight transfer stops at fees | Expected, and scripted — NIGHT not registered | Say so and move on; do not improvise |
 | Viewer says "No config.json" | Nothing deployed yet | Expected; offline verification still works |
 | Viewer shows a Vercel login | You used a per-deploy URL | Use `1claw-anchor-viewer.vercel.app` — only the alias is public |
 | `npm test` fails in `audit-anchor` | `managed/` missing | `npm run compact` in `contracts/audit-anchor` |

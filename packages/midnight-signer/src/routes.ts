@@ -100,8 +100,15 @@ export function collectDryRunProblems(f: DryRunFacts): string[] {
   }
 
   if (BigInt(f.dustBaseUnits || "0") <= 0n) {
-    // The failure people hit most: NIGHT present, DUST not yet accrued.
-    problems.push("no DUST — fees are paid in DUST, which accrues from held NIGHT over time");
+    // The failure people hit most: NIGHT present, but never registered. DUST is
+    // not a side effect of holding NIGHT — each unshielded UTXO carries a
+    // registeredForDustGeneration flag and the faucet hands out NIGHT with it
+    // false. Saying "accrues over time" here sent us waiting on something that
+    // was never going to happen.
+    problems.push(
+      "no DUST — fees are paid in DUST, and this NIGHT is not registered to generate it; " +
+        "run scripts/check-dust-registration.ts",
+    );
   }
 
   return problems;
