@@ -23,3 +23,6 @@ contracts/audit-anchor/src/managed/*
 contracts/audit-anchor/src/managed/audit-anchor/*
 !contracts/audit-anchor/src/managed/audit-anchor/contract/
 .vercel
+
+# Recovery phrases for the Preprod wallets — secret, never commit.
+.lace-recovery.txt
