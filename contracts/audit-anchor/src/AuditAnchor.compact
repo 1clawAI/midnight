@@ -23,7 +23,7 @@
 // real chain, by its real owner — without revealing any event, the head, or
 // even the agent's identifier.
 
-pragma language_version 0.23;
+pragma language_version 0.26;
 
 import CompactStandardLibrary;
 
@@ -70,8 +70,8 @@ export circuit headTag(head: Bytes<32>): Bytes<32> {
 // One step of the chain fold. Kept as its own circuit so the simulator tests and
 // the off-chain TypeScript helper can be checked against the *same* definition
 // rather than two hand-written encodings that drift.
-export circuit foldStep(head: Bytes<32>, event: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([head, event]);
+export circuit foldStep(head: Bytes<32>, eventHash: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([head, eventHash]);
 }
 
 // Register an agent and anchor its first head.

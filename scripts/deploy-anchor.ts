@@ -57,7 +57,7 @@ async function preflight(): Promise<void> {
   if (!res) {
     throw new Error(
       `proof server unreachable at ${CFG.proofServer}. Start it:\n` +
-        `  docker run -d -p 6300:6300 midnightntwrk/proof-server:8.1.0 -- midnight-proof-server --network testnet`,
+        `  docker run -d -p 6300:6300 midnightntwrk/proof-server:9.0.0-rc.7-arm64 -- midnight-proof-server --network testnet`,
     );
   }
   if (!E.MIDNIGHT_DEPLOYER_SEED) {

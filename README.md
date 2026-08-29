@@ -45,7 +45,7 @@ git clone https://github.com/1clawAI/midnight.git && cd midnight
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-compact update 0.31.1          # Preprod-compatible; see version pinning below
+compact update 0.34            # ledger 9 — see version pinning below
 
 cd contracts/audit-anchor
 npm install
@@ -85,12 +85,26 @@ targets **ledger 9** and will not deploy to Preprod. Pin deliberately:
 
 | Component | Pinned | Why |
 | --- | --- | --- |
-| Compact toolchain | **0.31.1** | Preprod compatibility matrix |
-| Compact runtime | **0.16.0** | must match the compiler's runtime version |
-| Ledger | 8.0.2 | what the 0.31.1 compiler targets |
-| Proof server | **8.1.0** | matrix-specified for Preprod (Track B only) |
+| Compact toolchain | **0.34** | ledger 9 |
+| Compact runtime | **0.19.0** | must match the compiler's runtime version |
+| Ledger | 9.1.0.0-rc.3 | what the 0.34 compiler targets |
+| Wallet SDK | **5.0.0** / zswap **4.0.0** | the ledger-9 pairing |
+| Proof server | **9.0.0-rc.7-arm64** | ledger 9; the bare `9.0.0-rc.7` tag has no multi-arch manifest |
 
-Source: [Midnight compatibility matrix](https://docs.midnight.network/relnotes/support-matrix).
+The published [compatibility matrix](https://docs.midnight.network/relnotes/support-matrix)
+still lists ledger 8 (toolchain 0.31.1 / runtime 0.16.0 / proof server 8.1.0) for
+Preprod. It is out of date: Preprod serves `unshieldedCreatedOutputs`,
+`dustLedgerEvents` and `dustGenerationStatus`, and a faucet payout arrives as
+**unshielded NIGHT** — all ledger-9 concepts. Ledger 8 was Zswap-only. Pinning to
+the matrix produces a contract that compiles and then cannot deploy.
+
+Two things bit us moving to 0.34, recorded so they do not bite again:
+
+- `event` became a reserved word in language 0.26, so a circuit parameter named
+  `event` no longer parses.
+- `Contract.initialState` and the impure circuits are **async**, and
+  `CircuitContext` became a call-tree structure built by `createCircuitContext`
+  rather than an object literal. The simulator was restructured accordingly.
 
 ## Layout
 
