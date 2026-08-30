@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build --workspace @1claw/anchor-viewer",
   "outputDirectory": "demo/anchor-viewer/dist",
-  "installCommand": "npm ci --ignore-scripts",
+  "installCommand": "npm install --ignore-scripts --no-audit --no-fund",
   "framework": null,
   "headers": [
     {
