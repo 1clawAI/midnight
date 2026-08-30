@@ -13,8 +13,8 @@ unshielded signing, plus an on-chain zero-knowledge proof that the audit log
 
 | Track | What it does | Status |
 | --- | --- | --- |
-| **A — Intents signing** | Unshielded NIGHT transfers on Preprod through 1Claw's Intents API: guardrails, spend caps, hash-chained audit log. No proof server on the signing path. | **Sidecar live, 36 tests; wallets funded; DUST registration scripted — see below** |
-| **B — Audit anchor** | A Compact contract that anchors 1Claw's audit chain head on Midnight, proving correct extension without revealing events, the head, or the agent's identity. | **Compiles + 12 simulator tests pass** |
+| **A — Intents signing** | Unshielded NIGHT transfers on Preprod through 1Claw's Intents API: guardrails, spend caps, hash-chained audit log. No proof server on the signing path. | **Sidecar live, 36 tests; wallet funded and generating DUST** |
+| **B — Audit anchor** | A Compact contract that anchors 1Claw's audit chain head on Midnight, proving correct extension without revealing events, the head, or the agent's identity. | **Compiles + 12 simulator tests pass; viewer live** |
 
 The tracks are independent in Wave 1: the signer never calls the contract.
 
@@ -108,32 +108,56 @@ DUST pays fees, and faucet NIGHT does not generate it. Every unshielded UTXO
 carries `registeredForDustGeneration`, and a fresh faucet grant has it `false`.
 A wallet can look funded and be unable to transact.
 
-```
+```bash
 npx tsx scripts/check-dust-registration.ts   # is this NIGHT generating?
 npx tsx scripts/register-dust.ts             # register it (proof server on :6300)
+npx tsx scripts/check-dust-registration.ts   # expect: generating
 ```
 
 `register-dust.ts` builds the wallet facade, waits for sync, selects the
 unregistered coins and submits `registerNightUtxosForDustGeneration` →
 `finalizeRecipe` → `submitTransaction` — the same transaction Lace's
 **Generate tDUST** button sends, from a seed you control, so the wallet that
-ends up able to pay fees is also the one `deploy-anchor.ts` drives.
+ends up able to pay fees is also the one `deploy-anchor.sh` drives.
 
-### Two things that cost us a day, recorded so they cost you nothing
+**The first registration pays for itself.** A wallet with zero DUST can still
+submit its own registration: NIGHT accrues DUST retroactively from the UTXO's
+creation time, so the fee is covered by generation that has already happened.
+There is no airdrop step and no chicken-and-egg. Verified on Preprod — a wallet
+holding 5,000 NIGHT and no DUST registered itself and came back with 356 DUST.
+
+The sync is the slow part: allow roughly an hour on a cold wallet. Both scripts
+print progress every 20 seconds, so a stall is visible rather than looking like
+patience.
+
+### Three things that cost us a day, recorded so they cost you nothing
 
 **The registration API is in a different npm scope.**
 `@midnightntwrk/wallet-sdk` — no hyphen — is not the same package as
 `@midnight-ntwrk/wallet`. The DUST surface lives only in the former. We searched
 the hyphenated scope, found nothing, and concluded no registration API existed
-anywhere. It does.
+anywhere. It does. Every other item here is downstream of that one character.
 
 **Do not hand-roll the unshielded address.** We derived the key correctly under
 `Roles.NightExternal` and then bech32m-encoded those bytes directly. The key
 bytes matched the SDK exactly; the address did not. We faucet-funded an address
-the SDK never derives, then spent a long time concluding that the toolchain and
-Lace disagreed about derivation — when only our own encoder did. Use
+the SDK never derives, then spent a long time concluding the toolchain and Lace
+disagreed about derivation — when only our own encoder did. Use
 `createKeystore(key, networkId).getBech32Address()`, which is what both the SDK
-and Lace use. `scripts/unshielded-address.ts` now does.
+and Lace use.
+
+**`WalletBuilder` cannot pay a fee.** The builder in `@midnight-ntwrk/wallet` is
+Zswap-only: it reports `coins: 0` for a wallet holding unshielded NIGHT, and
+then fails with `expected instance of LedgerParameters` because it cannot
+assemble a fee-paying transaction without the DUST wallet. That error names the
+symptom, not the cause. Use `WalletFacade`, which carries all three wallets —
+shielded, unshielded and dust. It balances into a *recipe* which you then
+finalize, rather than exposing a single `balanceTransaction`.
+
+**And two network identifiers that disagree.** `midnight-js` keeps a string and
+wants `"preprod"`; `zswap`'s `NetworkId` enum has no Preprod variant, so the
+wallet takes `TestNet`. Both are needed, and setting the first to `"test"`
+silently encodes addresses under the wrong HRP and finds no coins.
 
 ## Version pinning (this bit matters)
 
@@ -184,15 +208,32 @@ scripts/
 ## Running it
 
 ```bash
-npm run sync-wallets     # derive both wallets, print addresses to fund
-npm run deploy:anchor    # after funding: compile + deploy, writes viewer config
-npm run viewer           # browse anchors, verify a fold offline
-npm --workspace @1claw/midnight-signer run start   # sidecar on :8091
+npm ci
+
+# Tests — no account, no funds, no network needed
+cd contracts/audit-anchor       && npm test   # 12 simulator tests
+cd ../../packages/midnight-signer && npm test # 36 sidecar tests
+cd ../../demo/anchor-viewer       && npm test # 8 viewer tests
+
+# Preprod, in order. Each step needs the previous one.
+npx tsx scripts/sync-wallets-preprod.ts       # derive + print the faucet address
+#   fund it at https://faucet.preprod.midnight.network/
+npx tsx scripts/check-dust-registration.ts    # expect: not generating
+npx tsx scripts/register-dust.ts              # proof server on :6300
+npx tsx scripts/check-dust-registration.ts    # expect: generating
+bash scripts/deploy-anchor.sh                 # deploys, writes the viewer config
+
+# Or leave it unattended once the wallet is registered:
+bash scripts/watch-dust-and-deploy.sh         # waits for DUST, deploys, publishes
 ```
 
-The off-chain fold helper calls the compiled contract's own `pureCircuits.foldStep`
-rather than reimplementing `persistentHash` encoding — the circuit is the single
-source of truth, so the two cannot drift.
+The proof server is required for anything that proves a circuit — registration
+and deployment both do:
+
+```bash
+docker run -d -p 6300:6300 midnightntwrk/proof-server:9.0.0-rc.7-arm64 \
+  -- midnight-proof-server --network testnet
+```
 
 ## Ecosystem attribution
 

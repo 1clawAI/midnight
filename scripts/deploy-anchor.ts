@@ -192,7 +192,12 @@ async function main(): Promise<void> {
       privateStateStoreName: "audit-anchor",
       // Scopes the store per wallet so two deployers on one machine cannot read
       // each other's private state.
-      accountId: state.address as string,
+      // Scopes the private-state store to this wallet. Under the facade the
+      // address lives on state.shielded, not at the top level as the old
+      // builder had it — leaving it undefined fails with "accountId is
+      // required", which reads like a config omission rather than a shape
+      // change.
+      accountId: String(state.shielded.address),
       // The private-state store is encrypted at rest. The password is generated
       // once into .env.local rather than hard-coded — losing it means losing the
       // contract's private state (secretKey, salt, lastHead), which cannot be
