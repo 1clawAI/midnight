@@ -135,9 +135,33 @@ async function main() {
 
   await wallet.start(shieldedSecretKeys, dustSecretKey);
   console.log(`[${which}] address ${unshieldedKeystore.getBech32Address()}`);
-  console.log(`[${which}] syncing (this takes a while on a cold wallet) …`);
+  console.log(`[${which}] syncing (cold wallets take a while) …`);
+
+  // Heartbeat. A cold sync can run for an hour, and without this a hang and a
+  // slow sync look identical — which is exactly how the first attempt burned 55
+  // minutes before we noticed it had lost its connection and stopped.
+  const started = Date.now();
+  const beat = wallet
+    .state()
+    .pipe(Rx.throttleTime(20_000))
+    .subscribe((st: {
+      unshielded?: { progress?: { synced?: bigint; total?: bigint }; availableCoins?: unknown[] };
+      dust?: { progress?: { synced?: bigint; total?: bigint } };
+    }) => {
+      // These are prototype getters, not own properties — Object.entries() does
+      // not show them, which briefly convinced us the state shape had changed.
+      const mins = ((Date.now() - started) / 60000).toFixed(1);
+      const u = st.unshielded?.progress;
+      const pct =
+        u?.total && u.total > 0n
+          ? `${((Number(u.synced ?? 0n) / Number(u.total)) * 100).toFixed(1)}%`
+          : "?";
+      const coins = st.unshielded?.availableCoins?.length ?? 0;
+      console.log(`[${which}] +${mins}m unshielded ${pct}  coins=${coins}`);
+    });
 
   const state = await wallet.waitForSyncedState();
+  beat.unsubscribe();
   const balance = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
   console.log(`[${which}] NIGHT ${night(balance)}`);
   if (balance === 0n) {
