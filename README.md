@@ -13,7 +13,7 @@ unshielded signing, plus an on-chain zero-knowledge proof that the audit log
 
 | Track | What it does | Status |
 | --- | --- | --- |
-| **A — Intents signing** | Unshielded NIGHT transfers on Preprod through 1Claw's Intents API: guardrails, spend caps, hash-chained audit log. No proof server on the signing path. | **Sidecar live, 36 tests; wallets funded, blocked on DUST registration — see below** |
+| **A — Intents signing** | Unshielded NIGHT transfers on Preprod through 1Claw's Intents API: guardrails, spend caps, hash-chained audit log. No proof server on the signing path. | **Sidecar live, 36 tests; wallets funded; DUST registration scripted — see below** |
 | **B — Audit anchor** | A Compact contract that anchors 1Claw's audit chain head on Midnight, proving correct extension without revealing events, the head, or the agent's identity. | **Compiles + 12 simulator tests pass** |
 
 The tracks are independent in Wave 1: the signer never calls the contract.
@@ -102,56 +102,38 @@ runs under the **TestNet** network id — the two are encoded independently.
 `npm --workspace @1claw/midnight-signer run start` then answers `/v1/dry-run`
 with exactly which of those three is missing.
 
-## Known issue: a seed-derived wallet cannot be registered for DUST
+## Getting DUST on Preprod (this catches everyone)
 
-We could not deploy to Preprod, and the reason is worth writing down precisely
-because it affects anyone using the standard toolchain rather than a browser
-wallet.
-
-**DUST pays fees, and faucet NIGHT does not generate it.** Every unshielded UTXO
-carries a `registeredForDustGeneration` flag; a fresh faucet grant has it
-`false`. Reproduce with `npx tsx scripts/check-dust-registration.ts`:
+DUST pays fees, and faucet NIGHT does not generate it. Every unshielded UTXO
+carries `registeredForDustGeneration`, and a fresh faucet grant has it `false`.
+A wallet can look funded and be unable to transact.
 
 ```
-deployer   NIGHT 5,000   UTXOs 1   (0 registered for DUST generation)
+npx tsx scripts/check-dust-registration.ts   # is this NIGHT generating?
+npx tsx scripts/register-dust.ts             # register it (proof server on :6300)
 ```
 
-**Registration is only reachable through Lace.** The published SDKs expose no
-API for it: `@midnight-ntwrk/wallet@5.0.0` has no DUST surface, and
-`@midnight-ntwrk/ledger@4.0.0` contains 1,995 lines of type definitions with
-zero occurrences of "dust". The indexer's `DustRegistration` keys on
-`utxoTxHash` / `utxoOutputIndex`, both documented as *Cardano* fields, and
-`dustGenerationStatus` takes Cardano reward addresses and rejects a Midnight one
-outright. The documented path is Lace's **Generate tDUST** flow.
+`register-dust.ts` builds the wallet facade, waits for sync, selects the
+unregistered coins and submits `registerNightUtxosForDustGeneration` →
+`finalizeRecipe` → `submitTransaction` — the same transaction Lace's
+**Generate tDUST** button sends, from a seed you control, so the wallet that
+ends up able to pay fees is also the one `deploy-anchor.ts` drives.
 
-**And Lace derives a different wallet from the same recovery phrase.** Given one
-24-word phrase, `HDWallet.fromSeed` and Lace produce different keys:
+### Two things that cost us a day, recorded so they cost you nothing
 
-```
-HDWallet.fromSeed   mn_addr_preprod1rvf6kcas7k42n5s7qslxstqzae0wwv4ljhudgaszkhdgzzx7jmqqf8apt2
-Lace                mn_addr_preprod1rarjrl25qlta4f3hrjgp6hyxvxzyrr28zuhktj8xermshunn3d8suvce3v
-```
+**The registration API is in a different npm scope.**
+`@midnightntwrk/wallet-sdk` — no hyphen — is not the same package as
+`@midnight-ntwrk/wallet`. The DUST surface lives only in the former. We searched
+the hyphenated scope, found nothing, and concluded no registration API existed
+anywhere. It does.
 
-We searched for the mapping and did not find it: four seed interpretations
-(BIP39 entropy, the 64-byte BIP39 seed, and both halves of it) across accounts
-0–3, all five `Roles`, and indices 0–3 — 320 derivations — plus seven Cardano
-Icarus and hash-based seed transforms. None reproduce Lace's key. Network
-selection is not the cause; the HRP changes the prefix and never the payload,
-which we verified across `preprod`, `test`, `dev` and `undeployed`.
-
-**The consequence is a closed loop.** The only wallet that can be registered for
-DUST is one `deploy-anchor.ts` cannot drive, and the only wallet the deploy
-script can drive cannot be registered. DUST is non-transferable, so it cannot be
-bridged between them.
-
-Everything downstream is built and waiting: `scripts/watch-dust-and-deploy.sh`
-polls for DUST, deploys the anchor, writes the viewer config and publishes the
-site, unattended. It stops with a diagnosis rather than waiting out the clock
-when NIGHT is held but idle.
-
-If you know the intended flow for registering a seed-derived wallet on Preprod,
-we would genuinely like to hear it — **[QUESTION.md](QUESTION.md)** is the
-write-up we took to the Midnight community, with the evidence behind each claim.
+**Do not hand-roll the unshielded address.** We derived the key correctly under
+`Roles.NightExternal` and then bech32m-encoded those bytes directly. The key
+bytes matched the SDK exactly; the address did not. We faucet-funded an address
+the SDK never derives, then spent a long time concluding that the toolchain and
+Lace disagreed about derivation — when only our own encoder did. Use
+`createKeystore(key, networkId).getBech32Address()`, which is what both the SDK
+and Lace use. `scripts/unshielded-address.ts` now does.
 
 ## Version pinning (this bit matters)
 

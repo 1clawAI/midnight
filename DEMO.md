@@ -98,15 +98,13 @@ Cut to the sidecar's answer — this is live data, not a fixture:
 > one place: this NIGHT was never registered for DUST generation, and DUST is
 > what pays fees."
 
-**Say that plainly and keep moving.** It is a documented, reproducible finding —
-faucet NIGHT arrives with `registeredForDustGeneration=false`, registration is
-only reachable through the Lace wallet, and Lace derives a different wallet from
-the same recovery phrase than the SDK does. The README carries the 320
-derivations we searched before concluding that. A judge who runs
-`check-dust-registration.ts` sees exactly this, so naming it is stronger than
-routing around it.
+**Say that plainly and keep moving.** DUST pays fees, and faucet NIGHT does not
+generate it until the UTXO is registered — the failure everyone building on
+Preprod hits. If you have run `scripts/register-dust.ts` before recording, this
+step succeeds instead and you say so; either take is honest.
 
-> "One registration step from broadcasting. Everything above it is real."
+> "One registration step from broadcasting — and that step is one command:
+> scripts/register-dust.ts. Everything above it is real."
 
 **A note on the TEE.** Signing keys are held and used inside 1Claw's TEE for the
 six chains where Shroud has parity. Midnight signing currently runs in the vault
@@ -213,7 +211,7 @@ output, and it is why the Midnight leg of the demo stops where it does.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Chat returns no signature | Sidecar not running | Terminal 1: `npm start`, wait for the listening line |
-| Midnight transfer stops at fees | Expected, and scripted — NIGHT not registered | Say so and move on; do not improvise |
+| Midnight transfer stops at fees | NIGHT not registered for DUST | Say so, or run `scripts/register-dust.ts` beforehand |
 | Viewer says "No config.json" | Nothing deployed yet | Expected; offline verification still works |
 | Viewer shows a Vercel login | You used a per-deploy URL | Use `1claw-anchor-viewer.vercel.app` — only the alias is public |
 | `npm test` fails in `audit-anchor` | `managed/` missing | `npm run compact` in `contracts/audit-anchor` |
