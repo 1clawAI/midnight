@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "1Claw × Midnight — agent signing sidecar and audit-anchor contract",
+  "description": "1Claw \u00d7 Midnight \u2014 agent signing sidecar and audit-anchor contract",
   "workspaces": [
     "packages/*",
     "contracts/*",
@@ -12,16 +12,18 @@
   ],
   "scripts": {
     "sync-wallets": "tsx scripts/sync-wallets-preprod.ts",
-    "test": "npm run test --workspaces --if-present",
-    "ci": "npm run ci --workspaces --if-present",
+    "test": "npm run test:scripts && npm run test --workspaces --if-present",
+    "ci": "npm run test:scripts && npm run ci --workspaces --if-present",
     "sync-status": "grep -vE 'Timed out' .sync.log | tail -20",
     "sync-stop": "pkill -f sync-wallets-preprod || true",
     "deploy:anchor": "bash scripts/deploy-anchor.sh",
-    "viewer": "npm run dev --workspace @1claw/anchor-viewer"
+    "viewer": "npm run dev --workspace @1claw/anchor-viewer",
+    "test:scripts": "vitest run --config vitest.scripts.config.ts"
   },
   "devDependencies": {
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@midnight-ntwrk/midnight-js-contracts": "^4.1.1",

@@ -43,6 +43,7 @@ import { httpClientProofProvider } from "@midnight-ntwrk/midnight-js-http-client
 import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-private-state-provider";
 import { NodeZkConfigProvider } from "@midnight-ntwrk/midnight-js-node-zk-config-provider";
 import { unshieldedAddressForSeed } from "./unshielded-address.js";
+import { SyncLiveness, type ObservedState } from "./sync-liveness.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONTRACT_DIR = resolve(ROOT, "contracts/audit-anchor");
@@ -95,6 +96,8 @@ const CHECKPOINT_EVERY_MS = 60_000;
 const HEARTBEAT_MS = 20_000;
 /** A reported disconnect this long is the drop itself, not a blip. */
 const DISCONNECT_MS = Number(E.MIDNIGHT_DISCONNECT_MS ?? 90_000);
+/** No state emission at all for this long — wider, since a restore can lag. */
+const SILENCE_MS = Number(E.MIDNIGHT_SILENCE_MS ?? 270_000);
 
 /**
  * Password protecting the local private-state store. Generated on first use and
@@ -138,30 +141,6 @@ type WalletKeys = {
 };
 
 type SyncedState = Awaited<ReturnType<WalletFacade["waitForSyncedState"]>>;
-
-/**
- * The fields are `appliedIndex`/`highestIndex`, not `synced`/`total` — and they
- * are prototype getters, so Object.entries() shows nothing and a wrong guess
- * reads as an empty object rather than an error. Keying liveness on names that
- * do not exist gives a constant fingerprint, which is a watchdog that fires on
- * every healthy sync alike.
- *
- * `isConnected` is the direct signal for the failure this guards against: a
- * dropped indexer connection, which is otherwise only visible as progress that
- * quietly stops.
- */
-type Progress = {
-  appliedIndex?: bigint;
-  highestIndex?: bigint;
-  highestRelevantIndex?: bigint;
-  isConnected?: boolean;
-};
-
-type ObservedState = {
-  unshielded?: { progress?: Progress; availableCoins?: unknown[] };
-  dust?: { progress?: Progress };
-  shielded?: { progress?: Progress };
-};
 
 class StalledError extends Error {}
 
@@ -241,17 +220,10 @@ async function buildWallet(k: WalletKeys, cp: Checkpoint | null): Promise<Wallet
 function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
   return new Promise<SyncedState>((resolve, reject) => {
     const started = Date.now();
-    let lastAdvance = Date.now();
-    let lastConnected = Date.now();
-    let lastKey = "";
-    // Preprod does not populate every counter — `highestIndex` comes back empty
-    // here, so the fingerprint can be constant on a perfectly healthy sync. A
-    // no-progress timeout is therefore only trustworthy once the fingerprint has
-    // been seen to move at least once; until then the connection signal, which
-    // does report, is the only guard. Trusting a counter that was never live is
-    // how the first version of this watchdog would have failed every run.
-    let sawFirstKey = false;
-    let progressIsLive = false;
+    const liveness = new SyncLiveness(
+      { stallMs: STALL_MS, disconnectMs: DISCONNECT_MS, silenceMs: SILENCE_MS },
+      started,
+    );
     let lastLog = 0;
     let lastSave = Date.now();
     let saving = false;
@@ -259,25 +231,12 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
 
     const sub = wallet.state().subscribe((raw) => {
       const st = raw as unknown as ObservedState;
-      const parts = [st.unshielded?.progress, st.dust?.progress, st.shielded?.progress];
-      const u = parts[0];
-
-      // Any of the three advancing counts as progress: the shielded Merkle scan
-      // can run for minutes while the unshielded index sits still.
-      const key = parts.map((x) => `${x?.appliedIndex ?? -1n}/${x?.highestIndex ?? -1n}`).join(":");
-      if (key !== lastKey) {
-        if (sawFirstKey) progressIsLive = true;
-        sawFirstKey = true;
-        lastKey = key;
-        lastAdvance = Date.now();
-      }
-
       const now = Date.now();
-      const connected = parts.every((x) => x?.isConnected !== false);
-      if (connected) lastConnected = now;
+      liveness.observe(st, now);
 
       if (now - lastLog >= HEARTBEAT_MS) {
         lastLog = now;
+        const u = st.unshielded?.progress;
         const mins = ((now - started) / 60000).toFixed(1);
         const pct =
           u?.highestIndex && u.highestIndex > 0n
@@ -285,7 +244,8 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
             : "?";
         console.log(
           `  +${mins}m unshielded ${pct}  coins=${st.unshielded?.availableCoins?.length ?? 0}` +
-            `  conn=${connected ? "up" : "DOWN"}${progressIsLive ? "" : "  [progress counters idle]"}`,
+            `  conn=${liveness.connected ? "up" : "DOWN"}` +
+            `${liveness.progressIsLive ? "" : "  [progress counters idle]"}`,
         );
       }
 
@@ -311,16 +271,10 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
 
     watchdog = setInterval(() => {
       if (settled) return;
-      // Disconnect first: it is the specific failure, and it is worth acting on
-      // sooner than the generic no-progress timeout.
-      if (Date.now() - lastConnected > DISCONNECT_MS) {
+      const v = liveness.verdict(Date.now());
+      if (v.kind === "stalled") {
         done();
-        reject(new StalledError(`indexer disconnected for ${Math.round(DISCONNECT_MS / 1000)}s`));
-        return;
-      }
-      if (progressIsLive && Date.now() - lastAdvance > STALL_MS) {
-        done();
-        reject(new StalledError(`no sync progress for ${Math.round(STALL_MS / 60000)}m`));
+        reject(new StalledError(v.reason));
       }
     }, 15_000);
 
