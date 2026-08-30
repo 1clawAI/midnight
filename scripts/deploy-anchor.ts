@@ -244,6 +244,14 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
     let lastAdvance = Date.now();
     let lastConnected = Date.now();
     let lastKey = "";
+    // Preprod does not populate every counter — `highestIndex` comes back empty
+    // here, so the fingerprint can be constant on a perfectly healthy sync. A
+    // no-progress timeout is therefore only trustworthy once the fingerprint has
+    // been seen to move at least once; until then the connection signal, which
+    // does report, is the only guard. Trusting a counter that was never live is
+    // how the first version of this watchdog would have failed every run.
+    let sawFirstKey = false;
+    let progressIsLive = false;
     let lastLog = 0;
     let lastSave = Date.now();
     let saving = false;
@@ -258,6 +266,8 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
       // can run for minutes while the unshielded index sits still.
       const key = parts.map((x) => `${x?.appliedIndex ?? -1n}/${x?.highestIndex ?? -1n}`).join(":");
       if (key !== lastKey) {
+        if (sawFirstKey) progressIsLive = true;
+        sawFirstKey = true;
         lastKey = key;
         lastAdvance = Date.now();
       }
@@ -275,7 +285,7 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
             : "?";
         console.log(
           `  +${mins}m unshielded ${pct}  coins=${st.unshielded?.availableCoins?.length ?? 0}` +
-            `  conn=${connected ? "up" : "DOWN"}`,
+            `  conn=${connected ? "up" : "DOWN"}${progressIsLive ? "" : "  [progress counters idle]"}`,
         );
       }
 
@@ -308,7 +318,7 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
         reject(new StalledError(`indexer disconnected for ${Math.round(DISCONNECT_MS / 1000)}s`));
         return;
       }
-      if (Date.now() - lastAdvance > STALL_MS) {
+      if (progressIsLive && Date.now() - lastAdvance > STALL_MS) {
         done();
         reject(new StalledError(`no sync progress for ${Math.round(STALL_MS / 60000)}m`));
       }
