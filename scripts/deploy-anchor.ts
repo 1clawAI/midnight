@@ -10,7 +10,14 @@
  *
  *   npm run deploy:anchor
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  appendFileSync,
+  rmSync,
+} from "node:fs";
 import { randomBytes } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +73,28 @@ const CFG = {
 };
 
 /**
+ * Sync checkpoint.
+ *
+ * A cold Preprod sync runs for the better part of an hour, and the wallet's
+ * indexer connections drop often enough that three separate runs have now ended
+ * wedged rather than finished — zero open sockets, no output, indistinguishable
+ * from patience. The SDK offers no reconnect, so the only recovery is a fresh
+ * facade; each sub-wallet exposes `serializeState()`/`restore()`, so we
+ * checkpoint as we go and hand that state back on the next attempt. Without it
+ * a drop at minute fifty costs all fifty minutes again, which is how the last
+ * two attempts were lost.
+ *
+ * This holds wallet *state* — UTXOs and a sync tip, not keys — but it still
+ * describes what this wallet holds, so it is gitignored beside .env.local.
+ */
+const CHECKPOINT = resolve(ROOT, ".sync-checkpoint.json");
+/** No forward progress for this long means wedged, not slow. */
+const STALL_MS = Number(E.MIDNIGHT_SYNC_STALL_MS ?? 300_000);
+const MAX_SYNC_ATTEMPTS = Number(E.MIDNIGHT_SYNC_ATTEMPTS ?? 5);
+const CHECKPOINT_EVERY_MS = 60_000;
+const HEARTBEAT_MS = 20_000;
+
+/**
  * Password protecting the local private-state store. Generated on first use and
  * appended to .env.local; the store holds the anchor secretKey and salt, so this
  * file is as sensitive as the wallet seeds.
@@ -98,6 +127,226 @@ async function preflight(): Promise<void> {
   }
 }
 
+type Checkpoint = { shielded: string; unshielded: string; dust: string; savedAt: string };
+
+type WalletKeys = {
+  shieldedSecretKeys: ReturnType<typeof ledger.ZswapSecretKeys.fromSeed>;
+  dustSecretKey: ReturnType<typeof ledger.DustSecretKey.fromSeed>;
+  unshieldedKeystore: ReturnType<typeof createKeystore>;
+};
+
+type SyncedState = Awaited<ReturnType<WalletFacade["waitForSyncedState"]>>;
+
+/** Progress counters are prototype getters, so Object.entries() shows none. */
+type ObservedState = {
+  unshielded?: { progress?: { synced?: bigint; total?: bigint }; availableCoins?: unknown[] };
+  dust?: { progress?: { synced?: bigint; total?: bigint } };
+};
+
+class StalledError extends Error {}
+
+function readCheckpoint(): Checkpoint | null {
+  if (!existsSync(CHECKPOINT)) return null;
+  try {
+    const cp = JSON.parse(readFileSync(CHECKPOINT, "utf8")) as Checkpoint;
+    // A half-written checkpoint should cost a cold sync, not the whole run.
+    return cp.shielded && cp.unshielded && cp.dust ? cp : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCheckpoint(wallet: WalletFacade): Promise<void> {
+  const [shielded, unshielded, dust] = await Promise.all([
+    wallet.shielded.serializeState(),
+    wallet.unshielded.serializeState(),
+    wallet.dust.serializeState(),
+  ]);
+  writeFileSync(
+    CHECKPOINT,
+    `${JSON.stringify({ shielded, unshielded, dust, savedAt: new Date().toISOString() })}\n`,
+  );
+}
+
+/**
+ * Build the facade and begin syncing. Given a checkpoint the three sub-wallets
+ * are restored rather than started from keys, resuming at the saved tip.
+ */
+async function buildWallet(k: WalletKeys, cp: Checkpoint | null): Promise<WalletFacade> {
+  const connection = {
+    networkId: getNetworkId(),
+    indexerClientConnection: { indexerHttpUrl: CFG.indexer, indexerWsUrl: CFG.indexerWs },
+  };
+  const shieldedConfig = {
+    ...connection,
+    provingServerUrl: new URL(CFG.proofServer),
+    relayURL: new URL(CFG.node.replace(/^http/, "ws")),
+  };
+
+  const wallet = await WalletFacade.init({
+    configuration: {
+      ...shieldedConfig,
+      ...connection,
+      txHistoryStorage: new NoOpTransactionHistoryStorage(),
+      costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
+    },
+    shielded: (cfg: never) =>
+      cp
+        ? ShieldedWallet(cfg).restore(cp.shielded as never)
+        : ShieldedWallet(cfg).startWithSecretKeys(k.shieldedSecretKeys),
+    unshielded: (cfg: never) =>
+      cp
+        ? UnshieldedWallet(cfg).restore(cp.unshielded as never)
+        : UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(k.unshieldedKeystore)),
+    dust: (cfg: never) =>
+      cp
+        ? DustWallet(cfg).restore(cp.dust as never)
+        : DustWallet(cfg).startWithSecretKey(
+            k.dustSecretKey,
+            ledger.LedgerParameters.initialParameters().dust,
+          ),
+  });
+  await wallet.start(k.shieldedSecretKeys, k.dustSecretKey);
+  return wallet;
+}
+
+/**
+ * Resolve when synced; reject with StalledError when the sync stops advancing.
+ *
+ * The stall signal is the *absence of forward movement* in the progress
+ * counters, not the absence of emissions: a dropped connection can leave the
+ * observable emitting an unchanging state, which a liveness check keyed on
+ * emissions alone would read as healthy.
+ */
+function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
+  return new Promise<SyncedState>((resolve, reject) => {
+    const started = Date.now();
+    let lastAdvance = Date.now();
+    let lastKey = "";
+    let lastLog = 0;
+    let lastSave = Date.now();
+    let saving = false;
+    let settled = false;
+
+    const sub = wallet.state().subscribe((raw) => {
+      const st = raw as unknown as ObservedState;
+      const u = st.unshielded?.progress;
+      const d = st.dust?.progress;
+      const key = `${u?.synced ?? 0n}/${u?.total ?? 0n}:${d?.synced ?? 0n}/${d?.total ?? 0n}`;
+      if (key !== lastKey) {
+        lastKey = key;
+        lastAdvance = Date.now();
+      }
+
+      const now = Date.now();
+      if (now - lastLog >= HEARTBEAT_MS) {
+        lastLog = now;
+        const mins = ((now - started) / 60000).toFixed(1);
+        const pct =
+          u?.total && u.total > 0n
+            ? `${((Number(u.synced ?? 0n) / Number(u.total)) * 100).toFixed(1)}%`
+            : "?";
+        console.log(
+          `  +${mins}m unshielded ${pct}  coins=${st.unshielded?.availableCoins?.length ?? 0}`,
+        );
+      }
+
+      // Checkpointing is best-effort: a failure costs resume speed on the next
+      // attempt, and must not take down a sync that is otherwise healthy.
+      if (!saving && now - lastSave >= CHECKPOINT_EVERY_MS) {
+        saving = true;
+        saveCheckpoint(wallet)
+          .catch((e) => console.log(`  ! checkpoint failed (continuing): ${e?.message ?? e}`))
+          .finally(() => {
+            saving = false;
+            lastSave = Date.now();
+          });
+      }
+    });
+
+    let watchdog: ReturnType<typeof setInterval> | undefined;
+    const done = () => {
+      settled = true;
+      if (watchdog) clearInterval(watchdog);
+      sub.unsubscribe();
+    };
+
+    watchdog = setInterval(() => {
+      if (settled) return;
+      if (Date.now() - lastAdvance > STALL_MS) {
+        done();
+        reject(new StalledError(`no sync progress for ${Math.round(STALL_MS / 60000)}m`));
+      }
+    }, 15_000);
+
+    wallet.waitForSyncedState().then(
+      (st) => {
+        if (settled) return;
+        done();
+        resolve(st);
+      },
+      (e) => {
+        if (settled) return;
+        done();
+        reject(e);
+      },
+    );
+  });
+}
+
+/** Sync, restarting the facade on a stall, resuming from the last checkpoint. */
+async function syncWithRestarts(
+  k: WalletKeys,
+): Promise<{ wallet: WalletFacade; state: SyncedState }> {
+  let checkpoint = readCheckpoint();
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_SYNC_ATTEMPTS; attempt++) {
+    console.log(
+      checkpoint
+        ? `  attempt ${attempt}/${MAX_SYNC_ATTEMPTS}: resuming from checkpoint (${checkpoint.savedAt})`
+        : `  attempt ${attempt}/${MAX_SYNC_ATTEMPTS}: cold sync`,
+    );
+
+    let wallet: WalletFacade;
+    try {
+      wallet = await buildWallet(k, checkpoint);
+    } catch (e) {
+      // A checkpoint the SDK will not take would fail every remaining attempt
+      // identically. Drop it and let the next one start cold.
+      if (checkpoint) {
+        console.log(`  ! checkpoint rejected (${(e as Error)?.message ?? e}) — discarding`);
+        rmSync(CHECKPOINT, { force: true });
+        checkpoint = null;
+        lastError = e;
+        continue;
+      }
+      throw e;
+    }
+
+    try {
+      const state = await syncOrStall(wallet);
+      console.log("  synced.");
+      return { wallet, state };
+    } catch (e) {
+      lastError = e;
+      console.log(`  ! sync attempt ${attempt} failed: ${(e as Error)?.message ?? e}`);
+      await wallet.stop().catch(() => {});
+      // Pick up whatever the heartbeat saved before it wedged.
+      checkpoint = readCheckpoint();
+      if (attempt < MAX_SYNC_ATTEMPTS) {
+        const backoff = Math.min(30_000, 5_000 * attempt);
+        console.log(`  retrying in ${backoff / 1000}s`);
+        await new Promise((r) => setTimeout(r, backoff));
+      }
+    }
+  }
+
+  throw new Error(
+    `sync failed after ${MAX_SYNC_ATTEMPTS} attempts: ${(lastError as Error)?.message ?? lastError}`,
+  );
+}
+
 async function main(): Promise<void> {
   await preflight();
   // Two different network identifiers, at two different layers, and they do not
@@ -128,38 +377,15 @@ async function main(): Promise<void> {
   const dustSecretKey = ledger.DustSecretKey.fromSeed(keys[Roles.Dust]);
   const unshieldedKeystore = createKeystore(keys[Roles.NightExternal], getNetworkId());
 
-  const connection = {
-    networkId: getNetworkId(),
-    indexerClientConnection: { indexerHttpUrl: CFG.indexer, indexerWsUrl: CFG.indexerWs },
-  };
-  const shieldedConfig = {
-    ...connection,
-    provingServerUrl: new URL(CFG.proofServer),
-    relayURL: new URL(CFG.node.replace(/^http/, "ws")),
-  };
-
-  const wallet = await WalletFacade.init({
-    configuration: {
-      ...shieldedConfig,
-      ...connection,
-      txHistoryStorage: new NoOpTransactionHistoryStorage(),
-      costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
-    },
-    shielded: (cfg: never) => ShieldedWallet(cfg).startWithSecretKeys(shieldedSecretKeys),
-    unshielded: (cfg: never) =>
-      UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystore)),
-    dust: (cfg: never) =>
-      DustWallet(cfg).startWithSecretKey(
-        dustSecretKey,
-        ledger.LedgerParameters.initialParameters().dust,
-      ),
-  });
-  await wallet.start(shieldedSecretKeys, dustSecretKey);
-
   const unshielded = String(unshieldedKeystore.getBech32Address());
   console.log(`  unshielded: ${unshielded}`);
   console.log("  syncing (cold wallets take a while) …");
-  const state = await wallet.waitForSyncedState();
+
+  const { wallet, state } = await syncWithRestarts({
+    shieldedSecretKeys,
+    dustSecretKey,
+    unshieldedKeystore,
+  });
 
   const dustBalance = state.dust.balance(new Date());
   console.log(`  DUST: ${dustBalance}`);
@@ -206,7 +432,10 @@ async function main(): Promise<void> {
     }),
     publicDataProvider: indexerPublicDataProvider(CFG.indexer, CFG.indexerWs),
     zkConfigProvider: zkConfig,
-    proofProvider: httpClientProofProvider(CFG.proofServer),
+    // The zk config provider is the *second* argument, not an option: without
+    // it the provider has no circuit assets to prove against, and the failure
+    // lands at deploy time — after the hour-long sync, not before it.
+    proofProvider: httpClientProofProvider(CFG.proofServer, zkConfig),
     walletProvider: {
       // The *legacy* hex forms, not the bech32m display forms: the protocol
       // encodes these into a bech32 string with a 90-char cap, and the bech32m
@@ -255,7 +484,7 @@ async function main(): Promise<void> {
   console.log(`  wrote ${VIEWER_CONFIG}`);
   console.log("\n  Record this address in the README for judging.");
 
-  await wallet.close();
+  await wallet.stop();
 }
 
 main().catch((e) => {

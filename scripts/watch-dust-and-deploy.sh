@@ -20,7 +20,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 SIGNER_DIR="$ROOT/packages/midnight-signer"
-VIEWER_CONFIG="$ROOT/demo/anchor-viewer/config.json"
+VIEWER_CONFIG="$ROOT/demo/anchor-viewer/public/config.json"
 LOG="$ROOT/.dust-watch.log"
 SIGNER_URL="${MIDNIGHT_SIGNER_URL:-http://127.0.0.1:8091}"
 PROOF_URL="${MIDNIGHT_PROOF_SERVER_URL:-http://127.0.0.1:6300}"

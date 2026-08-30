@@ -7,6 +7,10 @@ dist/
 
 # Local wallet-sync progress log
 .sync.log
+
+# Wallet sync checkpoint: UTXOs and a sync tip, not keys, but it still
+# describes this wallet's holdings.
+.sync-checkpoint.json
 dist/
 
 # DUST watcher runtime logs
