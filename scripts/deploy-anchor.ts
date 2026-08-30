@@ -121,7 +121,7 @@ async function preflight(): Promise<void> {
   if (!res) {
     throw new Error(
       `proof server unreachable at ${CFG.proofServer}. Start it:\n` +
-        `  docker run -d -p 6300:6300 midnightntwrk/proof-server:9.0.0-rc.7-arm64 -- midnight-proof-server --network testnet`,
+        `  docker run -d -p 6300:6300 midnightntwrk/proof-server:8.1.0-arm64 -- midnight-proof-server --network preprod`,
     );
   }
   if (!E.MIDNIGHT_DEPLOYER_SEED) {
@@ -468,7 +468,12 @@ async function main(): Promise<void> {
       // builder had it — leaving it undefined fails with "accountId is
       // required", which reads like a config omission rather than a shape
       // change.
-      accountId: String(state.shielded.address),
+      // coinPublicKeyString(), not String(address): ShieldedAddress has no
+      // toString override either, so this key was the constant "[object
+      // Object]" — every wallet on the machine shared one private-state store,
+      // which is the opposite of what the comment above promises and would let
+      // a second deployer read and overwrite the first's secretKey and salt.
+      accountId: state.shielded.address.coinPublicKeyString(),
       // The private-state store is encrypted at rest. The password is generated
       // once into .env.local rather than hard-coded — losing it means losing the
       // contract's private state (secretKey, salt, lastHead), which cannot be
@@ -485,20 +490,37 @@ async function main(): Promise<void> {
       // The *legacy* hex forms, not the bech32m display forms: the protocol
       // encodes these into a bech32 string with a 90-char cap, and the bech32m
       // address is 118 chars — which surfaced as "invalid string length 118".
-      coinPublicKey: String(state.shielded.coinPublicKey),
-      encryptionPublicKey: String(state.shielded.encryptionPublicKey),
-      getCoinPublicKey: () => String(state.shielded.coinPublicKey),
-      getEncryptionPublicKey: () => String(state.shielded.encryptionPublicKey),
+      //
+      // toHexString(), not String(): these are class instances with no toString
+      // override, so String() yields the literal "[object Object]" — which is
+      // what has been handed to midnight-js as the coin public key. The type is
+      // just `string`, so nothing downstream rejected it at the boundary.
+      coinPublicKey: state.shielded.coinPublicKey.toHexString(),
+      encryptionPublicKey: state.shielded.encryptionPublicKey.toHexString(),
+      getCoinPublicKey: () => state.shielded.coinPublicKey.toHexString(),
+      getEncryptionPublicKey: () => state.shielded.encryptionPublicKey.toHexString(),
       // The facade balances into a *recipe*, then finalizes it — there is no
       // single balanceTransaction as the old builder had. `all` so the DUST
       // that pays the fee is balanced alongside the shielded side.
+      //
+      // balanceUnbound-, not balanceFinalized-: WalletProvider.balanceTx is
+      // handed an UnboundTransaction, and balanceFinalizedTransaction refuses
+      // at the door unless every intent is already signed — which surfaced as
+      // "Intent with id 1 is not bound", naming neither the method nor the
+      // mismatch. Binding happens here, between balancing and finalizing,
+      // because the transaction is built through midnight-js rather than
+      // through the wallet's own helpers, which take a signing callback up
+      // front the way register-dust.ts does.
       balanceTx: async (tx: never, ttl?: Date) => {
-        const recipe = await wallet.balanceFinalizedTransaction(
+        const recipe = await wallet.balanceUnboundTransaction(
           tx,
           { shieldedSecretKeys, dustSecretKey },
           { ttl: ttl ?? new Date(Date.now() + 3_600_000), tokenKindsToBalance: "all" },
         );
-        return (await wallet.finalizeRecipe(recipe)) as never;
+        const signed = await wallet.signRecipe(recipe, (data: never) =>
+          unshieldedKeystore.signData(data),
+        );
+        return (await wallet.finalizeRecipe(signed)) as never;
       },
     },
     midnightProvider: {
@@ -533,6 +555,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
+  // The message alone is not enough to place a failure like "bech32.decode
+  // input: printable ASCII expected", which names neither the caller nor the
+  // value. A stack costs nothing on a path that is already exiting non-zero.
   console.error(`\ndeploy failed: ${e?.message ?? e}`);
+  if (e?.stack) console.error(`\n${e.stack}`);
+  if (e?.cause) console.error(`\ncaused by: ${e.cause?.stack ?? e.cause}`);
   process.exit(1);
 });

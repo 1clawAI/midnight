@@ -58,8 +58,8 @@ fi
 if ! curl -sf --max-time 5 "$PROOF_URL/health" >/dev/null 2>&1; then
   say "FATAL: proof server unreachable at $PROOF_URL. Deployment proves a circuit, so"
   say "       this cannot succeed later on its own. Start it, then re-run:"
-  say "       docker run -d -p 6300:6300 midnightntwrk/proof-server:9.0.0-rc.7-arm64 \\"
-  say "         -- midnight-proof-server --network testnet"
+  say "       docker run -d -p 6300:6300 midnightntwrk/proof-server:8.1.0-arm64 \\"
+  say "         -- midnight-proof-server --network preprod"
   exit 1
 fi
 say "proof server reachable"

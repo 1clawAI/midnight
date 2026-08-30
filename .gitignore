@@ -11,6 +11,11 @@ dist/
 # Wallet sync checkpoint: UTXOs and a sync tip, not keys, but it still
 # describes this wallet's holdings.
 .sync-checkpoint.json
+
+# The contract's private state (secretKey, salt, lastHead), encrypted at rest
+# with MIDNIGHT_PRIVATE_STORE_PASSWORD. As sensitive as the wallet seeds, and
+# unrecoverable from the ledger, which publishes only commitments.
+midnight-level-db/
 dist/
 
 # DUST watcher runtime logs

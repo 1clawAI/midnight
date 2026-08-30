@@ -44,6 +44,9 @@ salt never leaves the 1Claw vault.
 ledger, and verifies a fold offline using the contract's own circuit even before
 a contract address is configured.
 
+**Deployed contract (Preprod):**
+`ba10cd4ac487b7a470f00ab6509295ea0673cdc5a26a866948c7bc2657fc2c86`
+
 For the threat model, why the obvious designs fail, what the proof does *not*
 claim, and the privacy analysis, see **[WHITEPAPER.md](WHITEPAPER.md)**.
 
@@ -231,8 +234,8 @@ The proof server is required for anything that proves a circuit — registration
 and deployment both do:
 
 ```bash
-docker run -d -p 6300:6300 midnightntwrk/proof-server:9.0.0-rc.7-arm64 \
-  -- midnight-proof-server --network testnet
+docker run -d -p 6300:6300 midnightntwrk/proof-server:8.1.0-arm64 \
+  -- midnight-proof-server --network preprod
 ```
 
 ## Ecosystem attribution
@@ -246,8 +249,13 @@ problems we could not have solved from the docs alone.
   language reference for Compact, and the DUST/NIGHT model that governs
   everything about funding a Preprod wallet.
 - [`midnightntwrk/midnight-node-docker`](https://github.com/midnightntwrk/midnight-node-docker)
-  — local-dev images. The proof server (`proof-server:9.0.0-rc.7`) runs from
-  here; deployment proves a circuit and cannot work without it.
+  — local-dev images. The proof server (`proof-server:8.1.0`) runs from here;
+  deployment proves a circuit and cannot work without it. Pin it to the version
+  in the [support matrix](https://docs.midnight.network/relnotes/support-matrix)
+  for the target network — 8.1.0 alongside Midnight.js 4.1.1 and Wallet SDK
+  1.2.0 on Preprod. A newer server still proves, and the node then rejects the
+  DUST fee proof at submission as `Custom error: 170`, which names neither the
+  proof server nor the version.
 - [`midnightntwrk/compact`](https://github.com/midnightntwrk/compact) — the
   compiler that produces `managed/`, the `.zkir` and the verifier keys.
 
