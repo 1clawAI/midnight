@@ -14,11 +14,23 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } fr
 import { randomBytes } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WalletBuilder } from "@midnight-ntwrk/wallet";
-import { NetworkId, nativeToken } from "@midnight-ntwrk/zswap";
+import {
+  HDWallet,
+  Roles,
+  WalletFacade,
+  ShieldedWallet,
+  DustWallet,
+  UnshieldedWallet,
+  createKeystore,
+  PublicKey,
+  NoOpTransactionHistoryStorage,
+} from "@midnightntwrk/wallet-sdk";
+import * as ledger from "@midnight-ntwrk/midnight-js-protocol/ledger";
 import { deployContract } from "@midnight-ntwrk/midnight-js-contracts";
 import { CompiledContract } from "@midnight-ntwrk/midnight-js-protocol/compact-js";
-import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
+import { setNetworkId, getNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
+import { WebSocket as NodeWebSocket } from "ws";
+(globalThis as unknown as { WebSocket: unknown }).WebSocket = NodeWebSocket;
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { httpClientProofProvider } from "@midnight-ntwrk/midnight-js-http-client-proof-provider";
 import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-private-state-provider";
@@ -88,42 +100,73 @@ async function preflight(): Promise<void> {
 
 async function main(): Promise<void> {
   await preflight();
-  // midnight-js keeps the network id in module state and refuses any wallet or
-  // contract operation until it is set. Preprod runs under the TestNet id.
-  setNetworkId("test");
+  // Two different network identifiers, at two different layers, and they do not
+  // agree. midnight-js keeps a *string* in module state and wants "preprod";
+  // zswap's NetworkId enum has no Preprod variant, so the wallet takes TestNet.
+  // Setting the midnight-js one to "test" encoded addresses with the test HRP
+  // and found no coins, because the funded UTXOs live under preprod.
+  setNetworkId("preprod");
   console.log("Deploying AuditAnchor to Preprod");
 
-  const wallet = await WalletBuilder.build(
-    CFG.indexer,
-    CFG.indexerWs,
-    CFG.proofServer,
-    CFG.node,
-    E.MIDNIGHT_DEPLOYER_SEED,
-    NetworkId.TestNet,
-    "warn",
-  );
-  wallet.start();
+  // WalletFacade, not WalletBuilder. The old @midnight-ntwrk/wallet builder is
+  // Zswap-only: it reported `coins: 0` for a funded wallet, because faucet NIGHT
+  // is unshielded, and then failed with "expected instance of LedgerParameters"
+  // because it could not assemble a fee-paying transaction without the DUST
+  // wallet. The facade carries all three (shielded, unshielded, dust), which is
+  // what scripts/register-dust.ts proved works against Preprod.
+  const hd = HDWallet.fromSeed(Buffer.from(E.MIDNIGHT_DEPLOYER_SEED, "hex"));
+  if (hd.type !== "seedOk") throw new Error("invalid MIDNIGHT_DEPLOYER_SEED");
+  const derived = hd.hdWallet
+    .selectAccount(0)
+    .selectRoles([Roles.Zswap, Roles.NightExternal, Roles.Dust])
+    .deriveKeysAt(0);
+  if (derived.type !== "keysDerived") throw new Error("key derivation failed");
+  const keys = derived.keys;
+  hd.hdWallet.clear();
 
-  const state = await new Promise<Record<string, unknown>>((done) => {
-    const sub = wallet.state().subscribe((s: unknown) => {
-      sub.unsubscribe();
-      done(s as Record<string, unknown>);
-    });
+  const shieldedSecretKeys = ledger.ZswapSecretKeys.fromSeed(keys[Roles.Zswap]);
+  const dustSecretKey = ledger.DustSecretKey.fromSeed(keys[Roles.Dust]);
+  const unshieldedKeystore = createKeystore(keys[Roles.NightExternal], getNetworkId());
+
+  const connection = {
+    networkId: getNetworkId(),
+    indexerClientConnection: { indexerHttpUrl: CFG.indexer, indexerWsUrl: CFG.indexerWs },
+  };
+  const shieldedConfig = {
+    ...connection,
+    provingServerUrl: new URL(CFG.proofServer),
+    relayURL: new URL(CFG.node.replace(/^http/, "ws")),
+  };
+
+  const wallet = await WalletFacade.init({
+    configuration: {
+      ...shieldedConfig,
+      ...connection,
+      txHistoryStorage: new NoOpTransactionHistoryStorage(),
+      costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
+    },
+    shielded: (cfg: never) => ShieldedWallet(cfg).startWithSecretKeys(shieldedSecretKeys),
+    unshielded: (cfg: never) =>
+      UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystore)),
+    dust: (cfg: never) =>
+      DustWallet(cfg).startWithSecretKey(
+        dustSecretKey,
+        ledger.LedgerParameters.initialParameters().dust,
+      ),
   });
+  await wallet.start(shieldedSecretKeys, dustSecretKey);
 
-  const coins = (state.availableCoins as unknown[] | undefined) ?? [];
-  const balances = (state.balances ?? {}) as Record<string, unknown>;
-  console.log(`  deployer: ${state.address as string}`);
-  console.log(`  coins: ${coins.length} | balances: ${JSON.stringify(balances)}`);
-
-  // Checking `availableCoins` here was wrong: that is the Zswap *shielded* set,
-  // and faucet NIGHT arrives unshielded, so a funded wallet failed this test.
-  // The unshielded balance is the meaningful precondition; whether DUST has
-  // accrued is left to the SDK, which is the only thing that actually knows.
-  const unshielded = unshieldedAddressForSeed(E.MIDNIGHT_DEPLOYER_SEED);
+  const unshielded = String(unshieldedKeystore.getBech32Address());
   console.log(`  unshielded: ${unshielded}`);
-  if (coins.length === 0) {
-    console.log("  note: no shielded coins; relying on unshielded NIGHT + DUST");
+  console.log("  syncing (cold wallets take a while) …");
+  const state = await wallet.waitForSyncedState();
+
+  const dustBalance = state.dust.balance(new Date());
+  console.log(`  DUST: ${dustBalance}`);
+  if (dustBalance === 0n) {
+    throw new Error(
+      "no DUST — run `npx tsx scripts/register-dust.ts` first; fees cannot be paid without it",
+    );
   }
 
   const compiled = (await import(resolve(MANAGED, "contract/index.js"))) as {
@@ -163,12 +206,21 @@ async function main(): Promise<void> {
       // The *legacy* hex forms, not the bech32m display forms: the protocol
       // encodes these into a bech32 string with a 90-char cap, and the bech32m
       // address is 118 chars — which surfaced as "invalid string length 118".
-      coinPublicKey: state.coinPublicKeyLegacy as string,
-      encryptionPublicKey: state.encryptionPublicKeyLegacy as string,
-      getCoinPublicKey: () => state.coinPublicKeyLegacy as string,
-      getEncryptionPublicKey: () => state.encryptionPublicKeyLegacy as string,
-      balanceTx: (tx: never, ttl?: Date) =>
-        wallet.balanceTransaction(tx, []).then((r: never) => r) as never,
+      coinPublicKey: String(state.shielded.coinPublicKey),
+      encryptionPublicKey: String(state.shielded.encryptionPublicKey),
+      getCoinPublicKey: () => String(state.shielded.coinPublicKey),
+      getEncryptionPublicKey: () => String(state.shielded.encryptionPublicKey),
+      // The facade balances into a *recipe*, then finalizes it — there is no
+      // single balanceTransaction as the old builder had. `all` so the DUST
+      // that pays the fee is balanced alongside the shielded side.
+      balanceTx: async (tx: never, ttl?: Date) => {
+        const recipe = await wallet.balanceFinalizedTransaction(
+          tx,
+          { shieldedSecretKeys, dustSecretKey },
+          { ttl: ttl ?? new Date(Date.now() + 3_600_000), tokenKindsToBalance: "all" },
+        );
+        return (await wallet.finalizeRecipe(recipe)) as never;
+      },
     },
     midnightProvider: {
       submitTx: (tx: never) => wallet.submitTransaction(tx) as never,
@@ -199,7 +251,6 @@ async function main(): Promise<void> {
   console.log("\n  Record this address in the README for judging.");
 
   await wallet.close();
-  void nativeToken;
 }
 
 main().catch((e) => {
