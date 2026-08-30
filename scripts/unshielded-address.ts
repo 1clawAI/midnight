@@ -4,40 +4,49 @@
 /**
  * Derive the *unshielded* NIGHT address for a seed.
  *
- * This exists because the faucet rejects shielded addresses, and none of the
- * wallet SDK surfaces an unshielded one: `WalletState` is Zswap-only in both
- * the 4.x and 5.x generations, exposing `address` (mn_shield-addr_…) and
- * nothing else. The unshielded key lives on the HD tree under
- * Roles.NightExternal and has to be bech32m-encoded separately.
+ * This used to hand-roll the encoding: derive the key under Roles.NightExternal
+ * and bech32m-encode those bytes directly with UnshieldedAddress.codec. The
+ * derivation was right — the key bytes match the SDK exactly — but the encoding
+ * was not, and it produced a different, wrong address. We faucet-funded that
+ * address, then spent a long time concluding the toolchain and Lace disagreed,
+ * when in fact only this file did.
  *
- * Note the HRP is `preprod`, not `testnet`, even though Preprod runs under the
- * TestNet network id — the two are encoded independently, and the faucet
- * matches on the HRP.
+ * It now goes through `createKeystore().getBech32Address()`, the same path the
+ * wallet SDK and Lace use. Note the scope: `@midnightntwrk/wallet-sdk` has no
+ * hyphen and is a different package from `@midnight-ntwrk/wallet`.
  */
-import { HDWallet, Roles } from "@midnight-ntwrk/wallet-sdk-hd";
-import { UnshieldedAddress } from "@midnight-ntwrk/wallet-sdk-address-format";
+import { Buffer } from "node:buffer";
+import { HDWallet, Roles, createKeystore } from "@midnightntwrk/wallet-sdk";
+import { setNetworkId, getNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 
-/** Bech32m HRP for Preprod unshielded addresses. */
+/** Preprod. Set once here so callers cannot derive against the wrong network. */
+setNetworkId("preprod");
+
 export const PREPROD_HRP = "preprod";
 
-export function unshieldedAddressForSeed(seedHex: string, hrp = PREPROD_HRP): string {
-  const seed = Uint8Array.from(Buffer.from(seedHex, "hex"));
-  const res = HDWallet.fromSeed(seed);
-  const hd = (res as { hdWallet?: unknown }).hdWallet;
-  if (!hd) throw new Error("could not derive an HD wallet from that seed");
-
-  const derived = (hd as { selectAccount(i: number): { selectRole(r: number): { deriveKeyAt(i: number): unknown } } })
-    .selectAccount(0)
-    .selectRole(Roles.NightExternal)
-    .deriveKeyAt(0);
-
-  const raw = (derived as { key?: Uint8Array }).key ?? (derived as unknown as Uint8Array);
-  // Copy through a plain byte view: the derived key may be backed by a shared
-  // buffer, and Buffer.from(ArrayBuffer) would alias it rather than copy.
-  const bytes = Buffer.from(Uint8Array.from(raw));
-  if (bytes.length !== UnshieldedAddress.keyLength) {
-    throw new Error(`expected ${UnshieldedAddress.keyLength} key bytes, got ${bytes.length}`);
+export function unshieldedAddressForSeed(seedHex: string): string {
+  const res = HDWallet.fromSeed(Buffer.from(seedHex, "hex")) as {
+    type: string;
+    hdWallet?: {
+      selectAccount(i: number): {
+        selectRoles(r: number[]): { deriveKeysAt(i: number): { type: string; keys: unknown[] } };
+      };
+      clear(): void;
+    };
+  };
+  if (res.type !== "seedOk" || !res.hdWallet) {
+    throw new Error("could not derive an HD wallet from that seed");
   }
 
-  return UnshieldedAddress.codec.encode(hrp, new UnshieldedAddress(bytes)).toString();
+  const derived = res.hdWallet
+    .selectAccount(0)
+    .selectRoles([Roles.NightExternal])
+    .deriveKeysAt(0);
+  if (derived.type !== "keysDerived") throw new Error("key derivation failed");
+
+  const address = String(
+    createKeystore(derived.keys[Roles.NightExternal], getNetworkId()).getBech32Address(),
+  );
+  res.hdWallet.clear();
+  return address;
 }

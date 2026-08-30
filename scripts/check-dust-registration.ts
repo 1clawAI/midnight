@@ -11,8 +11,9 @@
  * described as Cardano fields, and `dustGenerationStatus` rejects a Midnight
  * address outright.
  *
- * So this cannot register anything. It answers the one question worth asking
- * before waiting on DUST: is this NIGHT actually generating?
+ * This only reports; scripts/register-dust.ts does the registering. It answers
+ * the one question worth asking before waiting on DUST: is this NIGHT actually
+ * generating?
  *
  *   npx tsx scripts/check-dust-registration.ts
  */
@@ -99,8 +100,10 @@ for (const [key, label] of [["MIDNIGHT_DEPLOYER_SEED", "deployer"], ["MIDNIGHT_A
 }
 
 if (anyUnregistered) {
-  console.log(`\nNIGHT held but unregistered. Registration is backed by a Cardano UTXO and`);
-  console.log(`cannot be done from this repo — see README "Funding a Preprod wallet".`);
+  console.log(`\nNIGHT held but unregistered. Fix it with:`);
+  console.log(`  npx tsx scripts/register-dust.ts            # deployer`);
+  console.log(`  npx tsx scripts/register-dust.ts agent      # agent`);
+  console.log(`Needs the proof server on :6300 — registration is a proved transaction.`);
   process.exit(2);
 }
 process.exit(0);
