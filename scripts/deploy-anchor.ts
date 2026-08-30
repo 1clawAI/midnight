@@ -93,6 +93,8 @@ const STALL_MS = Number(E.MIDNIGHT_SYNC_STALL_MS ?? 300_000);
 const MAX_SYNC_ATTEMPTS = Number(E.MIDNIGHT_SYNC_ATTEMPTS ?? 5);
 const CHECKPOINT_EVERY_MS = 60_000;
 const HEARTBEAT_MS = 20_000;
+/** A reported disconnect this long is the drop itself, not a blip. */
+const DISCONNECT_MS = Number(E.MIDNIGHT_DISCONNECT_MS ?? 90_000);
 
 /**
  * Password protecting the local private-state store. Generated on first use and
@@ -137,10 +139,28 @@ type WalletKeys = {
 
 type SyncedState = Awaited<ReturnType<WalletFacade["waitForSyncedState"]>>;
 
-/** Progress counters are prototype getters, so Object.entries() shows none. */
+/**
+ * The fields are `appliedIndex`/`highestIndex`, not `synced`/`total` — and they
+ * are prototype getters, so Object.entries() shows nothing and a wrong guess
+ * reads as an empty object rather than an error. Keying liveness on names that
+ * do not exist gives a constant fingerprint, which is a watchdog that fires on
+ * every healthy sync alike.
+ *
+ * `isConnected` is the direct signal for the failure this guards against: a
+ * dropped indexer connection, which is otherwise only visible as progress that
+ * quietly stops.
+ */
+type Progress = {
+  appliedIndex?: bigint;
+  highestIndex?: bigint;
+  highestRelevantIndex?: bigint;
+  isConnected?: boolean;
+};
+
 type ObservedState = {
-  unshielded?: { progress?: { synced?: bigint; total?: bigint }; availableCoins?: unknown[] };
-  dust?: { progress?: { synced?: bigint; total?: bigint } };
+  unshielded?: { progress?: Progress; availableCoins?: unknown[] };
+  dust?: { progress?: Progress };
+  shielded?: { progress?: Progress };
 };
 
 class StalledError extends Error {}
@@ -222,6 +242,7 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
   return new Promise<SyncedState>((resolve, reject) => {
     const started = Date.now();
     let lastAdvance = Date.now();
+    let lastConnected = Date.now();
     let lastKey = "";
     let lastLog = 0;
     let lastSave = Date.now();
@@ -230,24 +251,31 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
 
     const sub = wallet.state().subscribe((raw) => {
       const st = raw as unknown as ObservedState;
-      const u = st.unshielded?.progress;
-      const d = st.dust?.progress;
-      const key = `${u?.synced ?? 0n}/${u?.total ?? 0n}:${d?.synced ?? 0n}/${d?.total ?? 0n}`;
+      const parts = [st.unshielded?.progress, st.dust?.progress, st.shielded?.progress];
+      const u = parts[0];
+
+      // Any of the three advancing counts as progress: the shielded Merkle scan
+      // can run for minutes while the unshielded index sits still.
+      const key = parts.map((x) => `${x?.appliedIndex ?? -1n}/${x?.highestIndex ?? -1n}`).join(":");
       if (key !== lastKey) {
         lastKey = key;
         lastAdvance = Date.now();
       }
 
       const now = Date.now();
+      const connected = parts.every((x) => x?.isConnected !== false);
+      if (connected) lastConnected = now;
+
       if (now - lastLog >= HEARTBEAT_MS) {
         lastLog = now;
         const mins = ((now - started) / 60000).toFixed(1);
         const pct =
-          u?.total && u.total > 0n
-            ? `${((Number(u.synced ?? 0n) / Number(u.total)) * 100).toFixed(1)}%`
+          u?.highestIndex && u.highestIndex > 0n
+            ? `${((Number(u.appliedIndex ?? 0n) / Number(u.highestIndex)) * 100).toFixed(1)}%`
             : "?";
         console.log(
-          `  +${mins}m unshielded ${pct}  coins=${st.unshielded?.availableCoins?.length ?? 0}`,
+          `  +${mins}m unshielded ${pct}  coins=${st.unshielded?.availableCoins?.length ?? 0}` +
+            `  conn=${connected ? "up" : "DOWN"}`,
         );
       }
 
@@ -273,6 +301,13 @@ function syncOrStall(wallet: WalletFacade): Promise<SyncedState> {
 
     watchdog = setInterval(() => {
       if (settled) return;
+      // Disconnect first: it is the specific failure, and it is worth acting on
+      // sooner than the generic no-progress timeout.
+      if (Date.now() - lastConnected > DISCONNECT_MS) {
+        done();
+        reject(new StalledError(`indexer disconnected for ${Math.round(DISCONNECT_MS / 1000)}s`));
+        return;
+      }
       if (Date.now() - lastAdvance > STALL_MS) {
         done();
         reject(new StalledError(`no sync progress for ${Math.round(STALL_MS / 60000)}m`));

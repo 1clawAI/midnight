@@ -145,19 +145,24 @@ async function main() {
     .state()
     .pipe(Rx.throttleTime(20_000))
     .subscribe((st: {
-      unshielded?: { progress?: { synced?: bigint; total?: bigint }; availableCoins?: unknown[] };
-      dust?: { progress?: { synced?: bigint; total?: bigint } };
+      unshielded?: {
+        progress?: { appliedIndex?: bigint; highestIndex?: bigint; isConnected?: boolean };
+        availableCoins?: unknown[];
+      };
     }) => {
       // These are prototype getters, not own properties — Object.entries() does
       // not show them, which briefly convinced us the state shape had changed.
+      // The fields are appliedIndex/highestIndex; `synced`/`total` were a guess
+      // and, being absent, printed "?" for every sync this script ever ran.
       const mins = ((Date.now() - started) / 60000).toFixed(1);
       const u = st.unshielded?.progress;
       const pct =
-        u?.total && u.total > 0n
-          ? `${((Number(u.synced ?? 0n) / Number(u.total)) * 100).toFixed(1)}%`
+        u?.highestIndex && u.highestIndex > 0n
+          ? `${((Number(u.appliedIndex ?? 0n) / Number(u.highestIndex)) * 100).toFixed(1)}%`
           : "?";
       const coins = st.unshielded?.availableCoins?.length ?? 0;
-      console.log(`[${which}] +${mins}m unshielded ${pct}  coins=${coins}`);
+      const conn = u?.isConnected === false ? " conn=DOWN" : "";
+      console.log(`[${which}] +${mins}m unshielded ${pct}  coins=${coins}${conn}`);
     });
 
   const state = await wallet.waitForSyncedState();
