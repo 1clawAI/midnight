@@ -13,8 +13,8 @@ unshielded signing, plus an on-chain zero-knowledge proof that the audit log
 
 | Track | What it does | Status |
 | --- | --- | --- |
-| **A — Intents signing** | Unshielded NIGHT transfers on Preprod through 1Claw's Intents API: guardrails, spend caps, hash-chained audit log. No proof server on the signing path. | **Sidecar live, 36 tests; wallet funded and generating DUST** |
-| **B — Audit anchor** | A Compact contract that anchors 1Claw's audit chain head on Midnight, proving correct extension without revealing events, the head, or the agent's identity. | **Compiles + 12 simulator tests pass; viewer live** |
+| **A — Intents signing** | Unshielded NIGHT transfers on Preprod through 1Claw's Intents API: guardrails, spend caps, hash-chained audit log. The transfer itself proves nothing, but its fee is a DUST spend, so the proof server is on the signing path. | **Live on Preprod — builds, signs and broadcasts; 63 tests** |
+| **B — Audit anchor** | A Compact contract that anchors 1Claw's audit chain head on Midnight, proving correct extension without revealing events, the head, or the agent's identity. | **Deployed and anchored on Preprod — viewer shows a live commitment at epoch 2; 12 simulator tests** |
 
 The tracks are independent in Wave 1: the signer never calls the contract.
 
@@ -86,6 +86,28 @@ curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
 The outputs come back as `1000000` to the recipient plus `4999000000` change —
 5,000 NIGHT preserved, since it is a self-transfer — and the
 `DustSpendProcessed` event is the fee being paid in DUST rather than NIGHT.
+
+**Anchored audit chain (Preprod):** the contract is not just deployed, it holds
+a real commitment. `demo-agent` was registered and then extended by a batch of
+three events:
+
+- `anchorInitial` — tx `00020462a64410d5a3c60935be7724a2e00fd2424bdecaf9fa0de55b65e3de92eb`
+- `anchorExtend` — tx `0032e0b69910129aa00f7403dfde75ee532b38a0ddd3873a48c5ee7f479202796f`
+
+The viewer now renders one row — commitment `447a28285208d82c…`, **epoch 2**,
+owner tag `89e838ebee93ce63…`. What is *not* there is the point: no events, no
+chain head, and nothing identifying the agent. Both writes are made by
+`scripts/anchor.ts`:
+
+```bash
+npx tsx scripts/anchor.ts --agent demo-agent            # first run: registers
+npx tsx scripts/anchor.ts --agent demo-agent --events 3 # after: folds a batch
+```
+
+The agent commitment is derived with the contract's own compiled `foldStep`
+rather than a second hand-written `persistentHash` encoding, for the same
+reason the viewer decodes with the compiled `ledger()`: two encodings of one
+relation drift, and the contract is the definition.
 
 For the threat model, why the obvious designs fail, what the proof does *not*
 claim, and the privacy analysis, see **[WHITEPAPER.md](WHITEPAPER.md)**.
@@ -266,17 +288,24 @@ demo/anchor-viewer/              # read-only UI over the deployed contract
 scripts/
   sync-wallets-preprod.ts        # derive + watch the two Phase 0 wallets
   deploy-anchor.sh               # compile, prove, deploy, write viewer config
+  anchor.ts                      # register an agent, then fold events into it
+  lib/anchor-runtime.ts          # wallet + providers shared by both anchor scripts
 ```
 
 ## Running it
 
 ```bash
-npm ci
+# npm install, not npm ci: the lockfile carries dangling references into an
+# optional light-client subtree (@substrate/connect -> smoldot) with no package
+# entries, which npm ci refuses and npm install resolves. Regenerating the lock
+# reproduces the same gap, so it is upstream rather than something to fix here.
+npm install
 
 # Tests — no account, no funds, no network needed
 cd contracts/audit-anchor       && npm test   # 12 simulator tests
 cd ../../packages/midnight-signer && npm test # 63 sidecar tests
 cd ../../demo/anchor-viewer       && npm test # 8 viewer tests
+cd ../..                          && npm run test:scripts # 13 sync-liveness tests
 
 # Preprod, in order. Each step needs the previous one.
 npx tsx scripts/sync-wallets-preprod.ts       # derive + print the faucet address
@@ -285,13 +314,20 @@ npx tsx scripts/check-dust-registration.ts    # expect: not generating
 npx tsx scripts/register-dust.ts              # proof server on :6300
 npx tsx scripts/check-dust-registration.ts    # expect: generating
 bash scripts/deploy-anchor.sh                 # deploys, writes the viewer config
+npx tsx scripts/anchor.ts --agent demo-agent  # register — without this the
+                                              # viewer renders an empty table,
+                                              # because a deploy publishes no
+                                              # commitment of its own
 
 # Or leave it unattended once the wallet is registered:
 bash scripts/watch-dust-and-deploy.sh         # waits for DUST, deploys, publishes
 ```
 
 The proof server is required for anything that proves a circuit — registration
-and deployment both do:
+and deployment both do, and so does *signing*, which was not obvious. An
+unshielded transfer has no circuit of its own, but its fee is paid by spending
+DUST, and a DUST spend carries a proof. Measured on the broadcast recorded
+above: `POST /prove` at 12:11:53Z, block at 12:12:00Z.
 
 ```bash
 docker run -d -p 6300:6300 midnightntwrk/proof-server:8.1.0-arm64 \
