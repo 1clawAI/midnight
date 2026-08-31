@@ -326,6 +326,18 @@ async function syncWithRestarts(
     try {
       const state = await syncOrStall(wallet);
       console.log("  synced.");
+
+      // Checkpoint at the tip, not just on the 60s timer.
+      //
+      // That timer only fires from inside syncOrStall, and a resume now reaches
+      // `synced` before it elapses — so every run after the first resumed from
+      // the same increasingly stale checkpoint and re-scanned a little more
+      // chain each time. Resume was quietly degrading back toward a cold sync.
+      // Best-effort: a failure here costs speed next time, never this run.
+      await saveCheckpoint(wallet).catch((e) =>
+        console.log(`  ! tip checkpoint failed (continuing): ${e?.message ?? e}`),
+      );
+
       return { wallet, state };
     } catch (e) {
       lastError = e;
