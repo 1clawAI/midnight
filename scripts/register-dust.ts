@@ -43,6 +43,7 @@ import {
 } from "@midnightntwrk/wallet-sdk";
 import * as ledger from "@midnight-ntwrk/midnight-js-protocol/ledger";
 import { unshieldedToken } from "@midnight-ntwrk/midnight-js-protocol/ledger";
+import type { ObservedState } from "./sync-liveness.js";
 import { setNetworkId, getNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 
 setNetworkId("preprod");
@@ -85,6 +86,9 @@ function deriveKeys(seedHex: string) {
   hd.hdWallet.clear();
   return result.keys;
 }
+
+/** The slice of FacadeState this script waits on. */
+type SyncedDustState = { isSynced: boolean; dust: { balance(d: Date): bigint } };
 
 const night = (raw: bigint) => `${raw / 1_000_000n}.${(raw % 1_000_000n).toString().padStart(6, "0")}`;
 const dust = (raw: bigint) =>
@@ -144,12 +148,12 @@ async function main() {
   const beat = wallet
     .state()
     .pipe(Rx.throttleTime(20_000))
-    .subscribe((st: {
-      unshielded?: {
-        progress?: { appliedIndex?: bigint; highestIndex?: bigint; isConnected?: boolean };
-        availableCoins?: unknown[];
-      };
-    }) => {
+    // Cast rather than annotate the parameter: FacadeState's availableCoins is
+    // `readonly UtxoWithMeta[]`, which is not assignable to a mutable
+    // `unknown[]`, so a narrower parameter type fails the subscribe overload.
+    // Same treatment as deploy-anchor.ts, and the same shared type.
+    .subscribe((raw) => {
+      const st = raw as unknown as ObservedState;
       // These are prototype getters, not own properties — Object.entries() does
       // not show them, which briefly convinced us the state shape had changed.
       // The fields are appliedIndex/highestIndex; `synced`/`total` were a guess
@@ -205,8 +209,10 @@ async function main() {
   await Rx.firstValueFrom(
     wallet.state().pipe(
       Rx.throttleTime(5_000),
-      Rx.filter((s: { isSynced: boolean }) => s.isSynced),
-      Rx.filter((s: { dust: { balance(d: Date): bigint } }) => s.dust.balance(new Date()) > 0n),
+      // One type through the pipe. Two filters each declaring their own narrow
+      // shape do not chain — rxjs threads the first operator's output type into
+      // the second, and `{ isSynced }` has no `dust`.
+      Rx.filter((s: SyncedDustState) => s.isSynced && s.dust.balance(new Date()) > 0n),
     ),
   );
   const finalState = await Rx.firstValueFrom(wallet.state());
