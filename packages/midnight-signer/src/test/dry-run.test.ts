@@ -8,8 +8,8 @@ import { collectDryRunProblems, type DryRunFacts } from "../routes.js";
  * Dry-run failure paths.
  *
  * These are the states a real wallet spends most of its life in — freshly
- * faucet-funded with NIGHT but no DUST yet, or holding unshielded NIGHT the
- * shielded wallet cannot spend. None of them can be produced on demand against
+ * faucet-funded with NIGHT but no DUST yet, or still catching up after a
+ * restart. None of them can be produced on demand against
  * live Preprod, which is exactly why the decision was pulled out of the network
  * call: given the facts, the verdict is pure and can be pinned.
  */
@@ -23,6 +23,7 @@ function healthy(over: Partial<DryRunFacts> = {}): DryRunFacts {
     hasCoins: true,
     amountBaseUnits: 1_000_000n,
     unshieldedAddress: ADDR,
+    synced: true,
     ...over,
   };
 }
@@ -43,7 +44,23 @@ describe("collectDryRunProblems", () => {
   it("flags zero UTXOs distinctly from an unfunded wallet", () => {
     const problems = collectDryRunProblems(healthy({ hasCoins: false }));
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain("no shielded (Zswap) coins");
+    expect(problems[0]).toContain("no spendable unshielded UTXOs");
+  });
+
+  it("flags an unsynced wallet first, since it makes the rest stale", () => {
+    const problems = collectDryRunProblems(healthy({ synced: false }));
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("still catching up");
+  });
+
+  // The regression that motivated the sync gate: restoring from a checkpoint
+  // emits a stale tip where DUST reads 0 and UTXOs look absent, so an unsynced
+  // wallet would otherwise be reported as broke rather than as not-yet-ready.
+  it("does not claim a wallet is unfunded merely because it is unsynced", () => {
+    const problems = collectDryRunProblems(
+      healthy({ synced: false, dustBaseUnits: "0", hasCoins: false, nightBaseUnits: "0" }),
+    );
+    expect(problems[0]).toContain("still catching up");
   });
 
   it("flags an unfunded address and names the address to fund", () => {

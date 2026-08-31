@@ -35,3 +35,4 @@ contracts/audit-anchor/src/managed/audit-anchor/*
 
 # Recovery phrases for the Preprod wallets — secret, never commit.
 .lace-recovery.txt
+.sync-checkpoints/

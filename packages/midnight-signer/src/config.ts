@@ -23,6 +23,16 @@ export const CFG = {
    * linger in memory indefinitely either.
    */
   walletTtlMs: Number(envOr("MIDNIGHT_SIGNER_WALLET_TTL_MS", String(30 * 60 * 1000))),
+  /**
+   * Where sync checkpoints live, one file per wallet.
+   *
+   * A cold Preprod sync is roughly 80 minutes, so without a checkpoint on disk
+   * a restarted signer reports zero DUST and cannot pay a fee until it finishes
+   * catching up. Defaults alongside the deploy script's own checkpoint.
+   */
+  checkpointDir: envOr("MIDNIGHT_SIGNER_CHECKPOINT_DIR", "../../.sync-checkpoints"),
+  /** The dust blob is ~11MB, so this trades write cost against resync cost. */
+  checkpointEveryMs: Number(envOr("MIDNIGHT_SIGNER_CHECKPOINT_MS", String(60 * 1000))),
 } as const;
 
 function envOr(key: string, fallback: string): string {

@@ -1,71 +1,85 @@
 // Copyright (C) 2026 1Claw
 // SPDX-License-Identifier: Apache-2.0
 
-import { nativeToken } from "@midnight-ntwrk/zswap";
+import { unshieldedToken } from "@midnight-ntwrk/midnight-js-protocol/ledger";
+import { MidnightBech32m } from "@midnightntwrk/wallet-sdk";
+import { getNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import type { WalletState } from "./wallet-pool.js";
 
 /**
- * Balance extraction.
+ * Balance extraction from a FacadeState.
  *
- * `balances` is keyed by token type. NIGHT is the native token; DUST is a
- * distinct type that accrues from held NIGHT and is what actually pays fees —
- * which is why it is reported separately rather than folded into one number. A
- * wallet can hold plenty of NIGHT and still be unable to transact.
+ * NIGHT and DUST live in different sub-wallets and neither is a key in one
+ * `balances` map. NIGHT held from the faucet is an *unshielded* UTXO balance;
+ * DUST is not a token balance at all but a value derived from registered NIGHT
+ * and elapsed time, which is why it takes a timestamp to read.
+ *
+ * That distinction is the whole reason they are reported separately: a wallet
+ * can hold plenty of NIGHT and still be unable to transact, because fees are
+ * paid in DUST and NIGHT only generates DUST once registered.
+ *
+ * Under the previous Zswap-only wallet none of this was reachable — DUST was
+ * guessed as "the non-native token, else 0", which always produced 0 and
+ * presented it as a measurement.
  */
 
-export const NIGHT_TOKEN = (): string => String(nativeToken());
+type FacadeShape = {
+  unshielded?: { balances?: Record<string, unknown>; availableCoins?: readonly unknown[] };
+  shielded?: { address?: unknown; availableCoins?: readonly unknown[] };
+  dust?: { balance?: (at: Date) => bigint };
+  isSynced?: boolean;
+};
 
-/**
- * NIGHT from the wallet's balance map, and DUST as **unknown**.
- *
- * DUST is not a token in `state.balances`. It is derived from registered NIGHT
- * and elapsed time by a DustWallet, which a WalletBuilder wallet does not have —
- * `@midnight-ntwrk/wallet` is Zswap-only, the same limitation that made
- * deploy-anchor move to WalletFacade.
- *
- * This used to guess "DUST is the non-native token, else 0", which always
- * produced 0 and presented it as fact. dryRun then reported "no DUST — this
- * NIGHT is not registered to generate it", a confident diagnosis of something
- * this process cannot observe, sending people to re-register DUST they already
- * had. Reporting null lets a caller tell "none" from "cannot tell".
- */
+const view = (state: WalletState): FacadeShape => state as unknown as FacadeShape;
+
 export function splitBalances(state: WalletState): {
   night: string;
   dust: string | null;
   raw: Record<string, string>;
 } {
-  const balances = (state.balances ?? {}) as Record<string, unknown>;
+  const s = view(state);
+
+  const balances = (s.unshielded?.balances ?? {}) as Record<string, unknown>;
   const raw: Record<string, string> = {};
   for (const [k, v] of Object.entries(balances)) raw[k] = String(v ?? "0");
 
-  const nightKey = NIGHT_TOKEN();
-  const night = raw[nightKey] ?? "0";
+  const night = raw[unshieldedToken().raw] ?? "0";
 
-  // Null, not "0": this wallet cannot see DUST at all, and a zero here reads as
-  // a measurement. `raw` still carries whatever the wallet did report, so a
-  // caller that wants to inspect it can.
-  const dust = null;
+  // `null` when the sub-wallet is absent, so a caller can still tell "none"
+  // from "cannot tell" if the facade is ever built without a DustWallet.
+  const dust = s.dust?.balance ? String(s.dust.balance(new Date())) : null;
 
   return { night, dust, raw };
 }
 
+/**
+ * The shielded address, bech32m-encoded.
+ *
+ * `ShieldedAddress` is a structured object with no meaningful `toString`, so
+ * interpolating it yields "[object Object]" — which is exactly what this
+ * endpoint returned as an address until the encoder below was used.
+ */
 export function addressOf(state: WalletState): string {
-  const a = state.address;
-  if (typeof a !== "string" || !a) throw new Error("wallet state has no address");
-  return a;
+  const a = view(state).shielded?.address;
+  if (a == null) throw new Error("wallet state has no shielded address");
+  return MidnightBech32m.encode(getNetworkId() as never, a as never).asString();
 }
 
+/** Hex coin public key. `coinPublicKeyString` is a method, not a property. */
 export function publicKeyOf(state: WalletState): string {
-  // coinPublicKeyLegacy is the hex form; the bech32m `coinPublicKey` is the
-  // display form. The Rust client stores the hex.
-  const legacy = state.coinPublicKeyLegacy;
-  if (typeof legacy === "string" && legacy) return legacy;
-  const cpk = state.coinPublicKey;
-  return typeof cpk === "string" ? cpk : "";
+  const a = view(state).shielded?.address as { coinPublicKeyString?: () => string } | undefined;
+  const str = typeof a?.coinPublicKeyString === "function" ? a.coinPublicKeyString() : "";
+  if (!str) throw new Error("wallet state has no coin public key");
+  return str;
 }
 
-/** True once the wallet has anything spendable. */
+/**
+ * Spendable *unshielded* UTXOs — what an unshielded transfer draws on.
+ *
+ * Deliberately not the shielded set: this signer only builds unshielded
+ * transfers, and holding unshielded NIGHT while the shielded wallet is empty is
+ * the normal state here, not a fault worth reporting.
+ */
 export function hasSpendableCoins(state: WalletState): boolean {
-  const coins = (state.availableCoins as unknown[] | undefined) ?? (state.coins as unknown[] | undefined) ?? [];
-  return coins.length > 0;
+  return (view(state).unshielded?.availableCoins ?? []).length > 0;
 }

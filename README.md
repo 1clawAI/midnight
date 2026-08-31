@@ -64,6 +64,29 @@ curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
 
 `__typename` comes back as `ContractDeploy`, and the hash matches the one above.
 
+**Preprod broadcast through the signer sidecar:**
+`82e641fbad9dd568e6beacd004c6c536f08013414448da631fc100352d659286`
+— block 2344291, 2026-08-31 12:12:00 UTC.
+
+That one is a plain unshielded transfer built, signed and submitted by
+`POST /v1/build-and-sign` — the sidecar's own path, not the deploy script's —
+and it is the end-to-end proof of the `WalletFacade` migration: the Zswap-only
+wallet could not assemble a fee-paying transaction at all. `submitTransaction`
+returns a transaction *identifier*
+(`0091521a0164efb772bc23e23c0f6325aee56063ab281c7a6e6f4344aa09c178a4`), which
+is what the indexer takes as `offset: {identifier: ...}`; the `hash` above is
+what it returns.
+
+```bash
+curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"{ transactions(offset: {identifier: \"0091521a0164efb772bc23e23c0f6325aee56063ab281c7a6e6f4344aa09c178a4\"}) { hash block { height timestamp } unshieldedCreatedOutputs { owner value } dustLedgerEvents { __typename } } }"}'
+```
+
+The outputs come back as `1000000` to the recipient plus `4999000000` change —
+5,000 NIGHT preserved, since it is a self-transfer — and the
+`DustSpendProcessed` event is the fee being paid in DUST rather than NIGHT.
+
 For the threat model, why the obvious designs fail, what the proof does *not*
 claim, and the privacy analysis, see **[WHITEPAPER.md](WHITEPAPER.md)**.
 
@@ -121,6 +144,26 @@ runs under the **TestNet** network id — the two are encoded independently.
 
 `npm --workspace @1claw/midnight-signer run start` then answers `/v1/dry-run`
 with exactly which of those three is missing.
+
+### Signer sync checkpoints
+
+The signer runs a full `WalletFacade` (shielded + unshielded + dust), because
+fees are paid in DUST and the Zswap-only wallet has no DustWallet to see it. A
+cold Preprod sync is ~1.47M indices at roughly 300/s — **about 80 minutes** —
+so the wallet is checkpointed to `.sync-checkpoints/<seed-hash>.json` and
+resumes from there in well under a minute. The directory is gitignored; each
+checkpoint is ~11MB, and losing one costs time, not funds.
+
+Two states are never written, because persisting either brings the wallet back
+reporting `dust: 0` *permanently* — the coin is not rescanned and the reserved
+spend never clears:
+
+- a wallet that has not caught up, and
+- a wallet that has built a transaction, broadcast or not.
+
+That second one is why `/v1/build-and-sign` with `broadcast: false` is not free
+of side effects: building the recipe reserves the dust coin, so the wallet
+reports `dust: 0` and cannot build another until the reservation clears.
 
 ## Getting DUST on Preprod (this catches everyone)
 
@@ -232,7 +275,7 @@ npm ci
 
 # Tests — no account, no funds, no network needed
 cd contracts/audit-anchor       && npm test   # 12 simulator tests
-cd ../../packages/midnight-signer && npm test # 36 sidecar tests
+cd ../../packages/midnight-signer && npm test # 63 sidecar tests
 cd ../../demo/anchor-viewer       && npm test # 8 viewer tests
 
 # Preprod, in order. Each step needs the previous one.
