@@ -15,10 +15,23 @@ import type { WalletState } from "./wallet-pool.js";
 
 export const NIGHT_TOKEN = (): string => String(nativeToken());
 
-/** Heuristic: DUST is the non-native token the wallet reports, if any. */
+/**
+ * NIGHT from the wallet's balance map, and DUST as **unknown**.
+ *
+ * DUST is not a token in `state.balances`. It is derived from registered NIGHT
+ * and elapsed time by a DustWallet, which a WalletBuilder wallet does not have —
+ * `@midnight-ntwrk/wallet` is Zswap-only, the same limitation that made
+ * deploy-anchor move to WalletFacade.
+ *
+ * This used to guess "DUST is the non-native token, else 0", which always
+ * produced 0 and presented it as fact. dryRun then reported "no DUST — this
+ * NIGHT is not registered to generate it", a confident diagnosis of something
+ * this process cannot observe, sending people to re-register DUST they already
+ * had. Reporting null lets a caller tell "none" from "cannot tell".
+ */
 export function splitBalances(state: WalletState): {
   night: string;
-  dust: string;
+  dust: string | null;
   raw: Record<string, string>;
 } {
   const balances = (state.balances ?? {}) as Record<string, unknown>;
@@ -28,11 +41,10 @@ export function splitBalances(state: WalletState): {
   const nightKey = NIGHT_TOKEN();
   const night = raw[nightKey] ?? "0";
 
-  // Anything that is not the native token and looks like a balance is treated
-  // as DUST. Reported as "0" rather than guessed when absent, so a caller can
-  // tell "no DUST" from "unknown".
-  const dustEntry = Object.entries(raw).find(([k]) => k !== nightKey);
-  const dust = dustEntry ? dustEntry[1] : "0";
+  // Null, not "0": this wallet cannot see DUST at all, and a zero here reads as
+  // a measurement. `raw` still carries whatever the wallet did report, so a
+  // caller that wants to inspect it can.
+  const dust = null;
 
   return { night, dust, raw };
 }

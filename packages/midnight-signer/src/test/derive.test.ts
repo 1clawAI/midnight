@@ -16,27 +16,38 @@ import { unshieldedAddressFor, PREPROD_HRP } from "../derive-unshielded.js";
  * The seeds are deliberately synthetic. Pinning a vector requires committing
  * the seed next to the address it produces, so no seed here may ever hold
  * value; these are patterns no wallet would generate.
+ *
+ * These vectors were regenerated on 2026-08-31. The originals were produced by
+ * an implementation that bech32m-encoded the derived key bytes directly instead
+ * of going through createKeystore(), so they pinned an address the SDK never
+ * derives — the test did exactly what its own warning describes, and locked in
+ * the wrong wallet.
+ *
+ * They are not simply whatever the new code emits. Each was cross-checked
+ * against scripts/unshielded-address.ts, a separate implementation of the same
+ * derivation, and all four agree. A vector regenerated from the code it
+ * verifies is not a test.
  */
 const VECTORS: ReadonlyArray<readonly [string, string, string]> = [
   [
     "all zeroes",
     "0000000000000000000000000000000000000000000000000000000000000000",
-    "mn_addr_preprod1ka4a3kfwkasf36fcq5d0n44l9jqa3068atf254zzefsvqs6xx79stxdtwc",
+    "mn_addr_preprod13h0e3c2m7rcfem6wvjljnyjmxy5rkg9kkwcldzt73ya5pv7c4p8svej7lr",
   ],
   [
     "all ones",
     "1111111111111111111111111111111111111111111111111111111111111111",
-    "mn_addr_preprod1v636fl960wkjuytj900tuk0vaktn4dvdky5g8dpv8nsw9j2ke4ysfpsfnj",
+    "mn_addr_preprod164t3m7skgcgnjv7r7xmduxhnznvdvz4wu0pw08ks865cg6eu6nss58n6rs",
   ],
   [
     "counting bytes 0x00..0x1f",
     "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-    "mn_addr_preprod1dj9edn49plgznx9ys7uga0cgwgetty538nvj00pec8r0hw075gasv6epye",
+    "mn_addr_preprod1ggynfcxm0v4hy9ug3gmm8jhxe0q03fh3ke9fszx6uyjyasa553dsa4le9g",
   ],
   [
     "all high bytes",
     "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    "mn_addr_preprod1kwdaxksl92cjgd8739gzy3wy6j0f2hnzx9f0lvgg604tw4m43zcqdnvxwr",
+    "mn_addr_preprod1fge6yp3uhlr728uzunslymlm96fd839gtua052axwnnytp0g324q0gt2kk",
   ],
 ];
 

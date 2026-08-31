@@ -63,7 +63,7 @@ export async function balance(body: Json): Promise<Json> {
 /** Everything the dry-run decision needs, with no network or wallet in it. */
 export interface DryRunFacts {
   nightBaseUnits: string;
-  dustBaseUnits: string;
+  dustBaseUnits: string | null;
   hasCoins: boolean;
   amountBaseUnits: bigint;
   unshieldedAddress: string;
@@ -99,12 +99,22 @@ export function collectDryRunProblems(f: DryRunFacts): string[] {
     problems.push("no shielded (Zswap) coins — unshielded NIGHT cannot be spent by the shielded wallet");
   }
 
-  if (BigInt(f.dustBaseUnits || "0") <= 0n) {
-    // The failure people hit most: NIGHT present, but never registered. DUST is
-    // not a side effect of holding NIGHT — each unshielded UTXO carries a
-    // registeredForDustGeneration flag and the faucet hands out NIGHT with it
-    // false. Saying "accrues over time" here sent us waiting on something that
-    // was never going to happen.
+  if (f.dustBaseUnits === null) {
+    // Not a finding about the wallet — a statement about this process. DUST is
+    // derived from registered NIGHT and elapsed time by a DustWallet, which the
+    // Zswap-only WalletBuilder used here does not have, so the balance is not
+    // observable from the sidecar at all.
+    //
+    // This previously asserted "no DUST — this NIGHT is not registered to
+    // generate it", which is a confident diagnosis of something it cannot see.
+    // It is also the *likely* explanation, which is what made it dangerous:
+    // someone with correctly registered DUST is sent to re-register it.
+    problems.push(
+      "DUST balance not observable from this sidecar (Zswap-only wallet has no DustWallet); " +
+        "fees are paid in DUST, so check registration with scripts/check-dust-registration.ts",
+    );
+  } else if (BigInt(f.dustBaseUnits) <= 0n) {
+    // A real measurement of zero, once something can measure it.
     problems.push(
       "no DUST — fees are paid in DUST, and this NIGHT is not registered to generate it; " +
         "run scripts/check-dust-registration.ts",
