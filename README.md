@@ -47,6 +47,23 @@ a contract address is configured.
 **Deployed contract (Preprod):**
 `ba10cd4ac487b7a470f00ab6509295ea0673cdc5a26a866948c7bc2657fc2c86`
 
+**Preprod signing transaction:**
+`47f1556d605be39b3e3c6b9c26312096e56a2c179c8b868ab45534fce92ad66e`
+— block 2332316, 2026-08-30 16:14:30 UTC.
+
+That is the deployment itself, which is a signed transaction and not a
+separate demo one: the deployer's unshielded key signed it, the local proof
+server proved the circuit, and the network accepted it. Verify either against
+the public indexer without any local setup:
+
+```bash
+curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"{ contractAction(address: \"ba10cd4ac487b7a470f00ab6509295ea0673cdc5a26a866948c7bc2657fc2c86\") { __typename address transaction { hash block { height timestamp } } } }"}'
+```
+
+`__typename` comes back as `ContractDeploy`, and the hash matches the one above.
+
 For the threat model, why the obvious designs fail, what the proof does *not*
 claim, and the privacy analysis, see **[WHITEPAPER.md](WHITEPAPER.md)**.
 
